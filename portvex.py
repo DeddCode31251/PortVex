@@ -5,13 +5,13 @@ Made by: Deadcode
 Github: https://github.com/DeddCode31251/PortVex
 """
 
-# =====[Libraries]=====
+# #~[Libraries]~#
 import argparse
 import time
 import ipaddress
 import socket
 
-# =====[Important Functions]=====
+# #~[Important Functions]~#
 
 # Loading function
 def loading_UI(timer):
@@ -24,7 +24,7 @@ def loading_UI(timer):
 
 
 
-# =====[Args]=====
+# #~[Args]~#
 parser = argparse.ArgumentParser(description="PortVex")
 
 
@@ -53,7 +53,7 @@ if not 1 <= args.p <= 65535:
 
 
 
-# =====[Welcome]=====
+# #~[Welcome]~#
 print("PORTVEX has Started!")
 print(r"""
 
@@ -77,7 +77,7 @@ print("Type -h or -help for guide")
 print("CLN Started")
 loading_UI(0.5)
 
-# =====[Functions]=====
+# #~[Functions]~#
 
 # Scan-Target-Ip function
 def scan_target_ip(ip ,port ,mode):
