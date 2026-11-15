@@ -370,7 +370,7 @@ def export_txt(filename, ip,mode, results,duration):
             file.write( "*" * 10 +'\n')
 
             print_success(f"TXT report saved to {filename}")
-    except OSError as error:
+    except (OSError, TypeError) as error:
         print_error(f"Failed to export TXT report: {error}")
 
 
@@ -507,13 +507,14 @@ def main():
     )
 
     # Export TXT
-    export_txt(
-        args.txt,
-        args.ip,
-        args.mode,
-        results,
-        duration
-    )
+    if args.txt:
+        export_txt(
+            args.txt,
+            args.ip,
+            args.mode,
+            results,
+            duration
+        )
     # Export JSON
     if args.json:
 
