@@ -1,8 +1,10 @@
 # PortVex 
 """
+
 PortVex is a command-line network reconnaissance tool written in Python.
 Made by: Deadcode
 Github: https://github.com/DeddCode31251/PortVex
+
 """
 
 # #~[Libraries]~#
@@ -19,15 +21,37 @@ VERSION = "1.0.0"
 
 # #~Terminal Colors~#
 class Colors:
-    RED    = "\033[91m"
-    GREEN  = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE   = "\033[94m"
-    CYAN   = "\033[96m"
-    WHITE  = "\033[97m"
-    PURPLE = "\033[95m"
-    BOLD   = "\033[1m"
-    RESET  = "\033[0m"
+    # Basic colors
+    RED           = "\033[91m"
+    GREEN         = "\033[92m"
+    YELLOW        = "\033[93m"
+    BLUE          = "\033[94m"
+    CYAN          = "\033[96m"
+    WHITE         = "\033[97m"
+    PURPLE        = "\033[95m"
+    RESET         = "\033[0m"
+
+    # Bright colors
+    BRIGHT_RED    = "\033[1;91m"
+    BRIGHT_GREEN  = "\033[1;92m"
+    BRIGHT_YELLOW = "\033[1;93m"
+    BRIGHT_BLUE   = "\033[1;94m"
+    BRIGHT_CYAN   = "\033[1;96m"
+    BRIGHT_WHITE  = "\033[1;97m"
+    BRIGHT_PURPLE = "\033[1;95m"
+
+    # Formatting
+    BOLD          = "\033[1m"
+    DIM           = "\033[2m"
+    UNDERLINE     = "\033[4m" 
+
+    # Backgrounds
+    BG_RED        = "\033[41m"
+    BG_GREEN      = "\033[42m"
+    BG_BLUE       = "\033[44m"
+    BG_PURPLE     = "\033[45m"
+
+
 # #~[Important Functions]~#
 
 # Loading function
@@ -59,9 +83,6 @@ Banner = rf"""
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⠟⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣿⠏⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠑⠙⠋⠏⠛⠛⠛⠓⠈⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
-                            PORTVEX
-                        Network Reconnaissance Tool
-                        {VERSION}
 """
 """print()
 time.sleep(1)
@@ -116,7 +137,13 @@ def parse_arguments():
     parser.add_argument(
         "--json",
         metavar="FILE",
-        help="Export results to a JSON file"
+        help="Export results as JSON file"
+    )
+
+    parser.add_argument(
+        "--txt",
+        metavar="FILE",
+        help="Export results as TXT file"
     )
 
     args = parser.parse_args()
@@ -276,7 +303,78 @@ def display_summary(ip, mode, results, duration):
     
     print("\n" + "*" *10)
 
+# TXT Export function
+def export_txt(filename, ip,mode, results,duration):
+    open_ports = [r for r in results if r['state'] == 'open']
+    closed_ports = [r for r in results if r['state'] == 'closed']
+    filtered_ports = [r for r in results if r['state'] == 'filtered/timeout']
+    error_ports = [r for r in results if r['state'] == 'error']
 
+    report = { 
+        "tool": "PortVex",
+        "version": VERSION,
+        
+        "target": ip,
+        "mode": mode,
+
+        "timestamp": datetime.now().isoformat(),
+        "duration": round(duration, 3),
+        "total_ports": len(results),
+        "results": results
+    }
+
+    try: 
+        with open(filename, 'w', encoding='utf-8') as file:
+            file.write("*"*10+"\n")
+            file.write("PORTVEX SCAN REPORT\n")
+            file.write("*"*10+"\n")
+
+            file.write("[ SCAN INFORMATION ]\n")
+            file.write("-" * 10 + "\n")
+
+            # General Information
+            file.write(f"Tool: {report['tool']}\n")
+            file.write(f"Version: {report['version']}\n")
+            file.write(f"Target: {report['target']}\n")
+            file.write(f"Mode: {report['mode']}\n")
+            file.write(f"Timestamp: {report['timestamp']}\n")
+            file.write(f"Duration: {report['duration']} seconds \n")
+            file.write(f"Total ports: {report['total_ports']} \n\n")
+
+            # Statistics
+            file.write("[ SCAN STATISTICS ]\n")
+            file.write("*" * 10 + '\n')
+            file.write(f"Open ports: {len(open_ports)}\n")
+            file.write(f"Closed ports: {len(closed_ports)}\n")
+            file.write(f"Filtered ports: {len(filtered_ports)}\n")
+            file.write(f"Errors: {len(error_ports)}\n\n")
+
+            # Port results
+            file.write("[ PORT RESULTS ]\n")
+            file.write("-" * 10 + "\n")
+
+            if results:
+                file.write(f"{'PORT':<12}{'SERVICE':<20}{'STATE'}\n")
+                file.write('-'*10+ '\n')
+                
+                for result in results:
+                    file.write(
+                        f"{result['port']:<12}"
+                        f"{result['service']:<20}"
+                        f"{result['state'].upper()}\n"
+                    )
+            else:
+                file.write("No scan results available.\n")
+            file.write("*"*10 + "\n")
+            file.write("END OF PORTVEX REPORT\n") 
+            file.write( "*" * 10 +'\n')
+
+            print_success(f"TXT report saved to {filename}")
+    except OSError as error:
+        print_error(f"Failed to export TXT report: {error}")
+
+
+            
 # JSON Export function
 def export_json(filename,ip,mode,results,duration):
     report = {
@@ -335,23 +433,45 @@ def print_section(title):
     print("*" * 10)
 # Print-info function(loading)
 def print_info(message):
-    print(f"\033[94m[*]\033[0m {message}")
+    print(f"{Colors.CYAN}[ + ]{Colors.RESET} {message}")
 
 # Print-Success function(loading)
 def print_success(message):
-    print(f"\033[92m[+]\033[0m {message}")
+    print(f"{Colors.GREEN}[ + ]{Colors.RESET} {message}")
 
 # Print-Error function(loading)
 def print_error(message):
-    print(f"\033[91m[-]\033[0m {message}")
+    print(f"{Colors.BRIGHT_RED}[ - ]{Colors.RESET} {message}")
 
 # Print-Warning function(loading)
 def print_warning(message):
-    print(f"\033[91m[-]\033[0m {message}")
+    print(f"{Colors.YELLOW}[ ! ]{Colors.RESET} {message}")
 
 # Print-Banner function(loading)
 def print_banner():
     print(f"{Colors.RED}{Colors.BOLD}{Banner}{Colors.RESET}")
+
+    print(
+        f"{Colors.CYAN}"
+        "             [ "
+        f"{Colors.WHITE}Network Reconnaissance"
+        f"{Colors.CYAN} ]"
+        f"{Colors.RESET}"
+    )
+
+    print(
+        f"{Colors.PURPLE}"
+        f"              Version: {Colors.WHITE}{VERSION}"
+        f"{Colors.RESET}"
+    )
+
+    print(
+        f"{Colors.DIM}"
+        "        Developed by Deadcode"
+        f"{Colors.RESET}"
+    )
+
+    print(f"{Colors.RED}{'*' * 10}{Colors.RESET}")
 
 
 # #~[Main loop]~#
@@ -386,6 +506,14 @@ def main():
         duration
     )
 
+    # Export TXT
+    export_txt(
+        args.txt,
+        args.ip,
+        args.mode,
+        results,
+        duration
+    )
     # Export JSON
     if args.json:
 
