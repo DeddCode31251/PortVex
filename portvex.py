@@ -13,6 +13,7 @@ import time
 import ipaddress
 import socket
 import json
+import sys
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -226,7 +227,25 @@ def identify_service(port):
         return socket.getservbyport(port, "tcp")
     except OSError:
         return "Unknown"
+
+# Progess Bar
+def show_progress(completed, total, width=35):
+    if total == 0:
+        return
     
+    percentage = completed/total
+    filled = int(width * percentage)
+    bar = "#" * filled + '-' * (width - filled)
+
+    sys.stdout.write(
+        f"\r{Colors.CYAN}"
+        f"[{bar}]"
+        f"{percentage * 100:5.1f}%"
+        f" | {completed}/{total} ports"
+        f"{Colors.RESET}"
+    )
+
+    sys.stdout.flush()
 # Scan port Function
 def scan_port(ip, port, timeout):
 
@@ -409,6 +428,12 @@ def scan_target(ip ,ports ,timeout, workers):
     start_time = time.time()
     results = []
 
+    total_ports = len(ports)
+    completed_ports = 0
+
+    print_info(f"Starting scan against {ip}")
+    print_info(f"Scanning {total_ports} TCP ports...")
+
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
             executor.submit(scan_port, ip, port, timeout)
@@ -420,10 +445,14 @@ def scan_target(ip ,ports ,timeout, workers):
 
             if result is not None:
                 results.append(result)
+            completed_ports += 1
+
+            show_progress(completed_ports, total_ports)
     duration = time.time() - start_time
 
     # Sort results by port number
     results.sort(key=lambda result: result["port"])
+    print_success("Scanning completed!")
 
     return results, duration
 
