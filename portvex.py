@@ -1,4 +1,4 @@
-# PortVex 
+
 """
 
 PortVex is a command-line network reconnaissance tool written in Python.
@@ -24,7 +24,7 @@ import ssl
 
 from dataclasses import asdict, dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 
 __version__ = "2.0.0"
 
@@ -105,7 +105,7 @@ SERVICE_MAP = {
     10000: 'webmin',
     11211: 'memcached',
     27017: 'mongodb',
-    50000: 'jenkis-agent',
+    50000: 'jenkins-agent',
 }
 
 # Common Ports List
@@ -136,7 +136,7 @@ SIGNATURES = [
 PROBES = {
     6379: b"PING\r\n"
 }
-HTTP_PROBE = b"HEAD / HTTP/1.0\r\nHOST: %s\r\nUser-Agent:PortVex\r\n\r\n"
+HTTP_PROBE = b"HEAD / HTTP/1.0\r\nHOST: %s\r\nUser-Agent: PortVex\r\n\r\n"
 GENERIC_PROBE = b"\r\n"
 
 # #~[Output Helpers]~#
@@ -211,7 +211,7 @@ def parse_ports(spec: str) -> list[int]:
     if spec in ('-', 'all'):
         return list(range(1,65536))
     ports: set[int] = set()
-    for part in spec.split('.'):
+    for part in spec.split(','):
         part = part.strip()
         if not part:
             continue
@@ -225,17 +225,17 @@ def parse_ports(spec: str) -> list[int]:
             raise argparse.ArgumentTypeError(f"invalid port or range: '{part}'")
         if not (1 <= lo <= hi <= 65535):
             raise argparse.ArgumentTypeError(f"Port out of range (1-65535): '{part}'")
-            ports.update(range(lo, hi+1))
-        if not ports:
-            raise argparse.ArgumentTypeError('no ports given')
-        return sorted(ports)
+        ports.update(range(lo, hi+1))
+    if not ports:
+        raise argparse.ArgumentTypeError('no ports given')
+    return sorted(ports)
 
 def build_parser () -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="portvex",
         description="PortVex - async TCP port scanner with service/banner detection.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog(
+        epilog=(
             "examples:\n"
             "   portvex.py -i 10.10.10.5 --mode common\n"
             "   portvex.py -i 10.10.10.5 -p 20,80,8000-8100\n"
@@ -257,7 +257,7 @@ def build_parser () -> argparse.ArgumentParser:
     help="retries for time-out ports (default 1)")
     p.add_argument('--rate', type=float, default=0, 
     help="max new connections per second (0 = unlimited)")
-    p.add_argument('--no-banner', aaction="store_true", 
+    p.add_argument('--no-banner', action="store_true", 
     help="skip banner grabbing/service detection (faster)")
     p.add_argument('-q', '--quiet', action='store_true',
     help="print only 'host:port' per open port (pipe-friendly, implies --no-banner)")
@@ -269,61 +269,370 @@ def build_parser () -> argparse.ArgumentParser:
     return p
 
 class RateLimiter:
-    pass
+    """Spaces connection attemmpts evenly (N per second)"""
 
-async def _close(writer: asyncio.Stream.Writer) -> None:
-    pass
+    def __init__(self, rate: float):
+        self.interval = 1.0 / rate if rate > 0 else 0.0
+        self._next = 0.0
+        self._lock = asyncio.Lock()
+    
+    async def wait(self) -> None:
+        if not self.interval:
+            return
+        loop = asyncio.get_running_loop()
+        async with self._lock:
+            now = loop.time()
+            delay = max(0.0, self._next - now)
+            self._next = max(now, self._next) + self.interval
+        
+        if delay:
+            await asyncio.sleep(delay)
+
+
+async def _close(writer: asyncio.StreamWriter) -> None:
+    try:
+        writer.close()
+        await asyncio.wait_for(writer.wait_closed(), 1.0)
+    except Exception:
+        pass
 
 async def probe_port(host: str, port: int, timeout: float, retries: int, limiter: RateLimiter) -> PortResult:
-    pass
+    """TCP connect check. Distinguishes open / closed (RST) / filtered (silence)."""
+    loop = asyncio.get_running_loop()
+    state = "filtered"
+    for attempt in range(retries + 1):
+        await limiter.wait()
+        t0 = loop.time()
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+            rtt = (loop.time() - t0) * 1000
+            await _close(writer)
+            return PortResult(port, "open", rtt_ms=round(rtt, 1))
+        except (asyncio.TimeoutError, TimeoutError):
+            state = "filtered" # No answer: retry, could be packet loss
+            continue
+        except ConnectionRefusedError:
+            return PortResult(port, "closed") # RST: host is up, port is closed
+        except OSError as e:
+            if e.errno in (errno.EMFILE, errno.ENFILE):
+                await asyncio.sleep(0.2) # out of file descriptors: back off, retry
+                continue
+            state = "filtered"
+            break
+    return PortResult(port, state)
 
 async def _talk(host: str, sni: str | None, port: int, use_tls: bool, passive: bool, probe:bytes | None, timeout: float):
-    pass
+    """ Open a connection, optionally wrap in TLS, read a banner. returns (data, tls_version) """
+    ctx = None
+    if use_tls: 
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE # recon: we want to see self-signed certs too
+        
+        try:
+            ctx.set_ciphers("DEFAULT:@SECLEVEL=0") # allow old servers
+        except ssl.SSLError:
+            pass
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(host, port, ssl=ctx, server_hostname=sni if use_tls else None),
+        timeout,
+    )
+    tls_version=""
+    try: 
+        if use_tls:
+            sslobj = writer.get_extra_info("ssl_object")
+            tls_version = sslobj.version() if sslobj else ""
+        data=b""
+        read_to = min(timeout, 1.5)
+        if passive: # many services (ssh/ftp/smtp) talk first
+            try: 
+                data = await asyncio.wait_for(reader.read(1024), read_to)
+            except (asyncio.TimeoutError, TimeoutError):
+                data=b""
+        if not data and probe: # silent: poke it
+            writer.write(probe)
+            await writer.drain()
+            try:
+                data = await asyncio.wait_for(reader.read(2048), read_to)
+            except (asyncio.TimeoutError, TimeoutError):
+                data=b""
+        return data, tls_version
+    finally:
+        await _close(writer)
 
 def _clean(data: bytes) -> str:
-    pass
+    text = data.decode("utf-8", "replace")
+    return "".join(ch if ch.isprintable() or ch in "\r\n\t" else "." for ch in text)
 
 def identify(port: int, data:bytes, tls:str) -> tuple[str,str]:
-    pass
+    """ Return (service, banner), Service ends in '?' when it is only a port-number guess."""
+    text = _clean(data).strip()
+
+    # Mysql greeting: 3-byte length, seq, protocol 0x0a, then NUL-terminated version
+    if len(data) > 6 and data[4] == 0x0A and data[5:6].isdigit():
+        ver=data[5:].split(b"\x00", 1)[0].decode("latin-1", 'replace')
+        return 'mysql',ver
+    
+    for rx, service, grp in SIGNATURES:
+        m = rx.search(text)
+        if not m or service == "unknown":
+            continue
+        if service == "http":
+            server = re.search(r"^Server:\s*(.+)$", text, re.I | re.M)
+            status = text.splitlines()[0][:60]
+            banner = f"{status} | {server.group(1).strip()}" if server else status
+            if tls:
+                service = "https"
+            return service, banner[:120]
+        if grp:
+            return service,m.group(grp)[:120]
+        return service, (text.splitlines()[0] if text else  "")[:120]
+    guess = SERVICE_MAP.get(port)
+    first_line = text.splitlines()[0][:120] if text else ""
+    if guess:
+        return guess + "?", first_line
+    return "unknown", first_line        
 
 async def fingerprint(host: str, sni:str | None, port:int, timeout: float) -> tuple[str, str, str]:
-    async def attempt(user_tls: bool):
-        pass
+    """ Grab banner and work out the service. Returns (service, banner, tls_version)"""
+    host_hdr = (sni or host).encode()
+    http_probe = HTTP_PROBE % host_hdr
+    is_http = port in HTTP_PORTS or port in (443, 8443, 9443, 6443)
+    plain_probe = http_probe if is_http else PROBES.get(port, GENERIC_PROBE)
+
+    async def attempt(use_tls: bool):
+        probe = http_probe if (use_tls and is_http) or (use_tls and port not in TLS_PORTS) \
+            else (plain_probe if not use_tls else GENERIC_PROBE)
+        passive = not (is_http and not use_tls)
+        return await _talk(host, sni, port, use_tls, passive,probe, timeout)
+
+    order = [True,False] if port in TLS_PORTS else [False, True]
+    for use_tls in order:
+        try:
+            data, tls = await attempt(use_tls)
+        except (ssl.SSLError, ConnectionError, OSError, asyncio.TimeoutError, TimeoutError):
+            continue
+
+        # Plain attempt that got nothing, or a TLS alert: the port is probably TLS
+        if not use_tls and (not data or data[:2] in (b"\x15\03", b"\x16\x03")):
+            continue
+        service, banner = identify(port, data, tls)
+        if tls and not service.endswith("?") and service not in ("https",):
+            service += "/tls"
+        elif tls and service.endswith("?") and not service.startswith("http"):
+            service = service[:-1] + "/tls?"
+        return service, banner, tls
+
+    # Nothinhg workerd: fall back to port-number guess
+    guess = SERVICE_MAP.get(port)
+    return (guess + "?" if guess else "unknown"), "", ""
 
 async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
+    global PROGRESS_ACTIVE
+    limiter = RateLimiter(args.rate)
+    total = len(ports)
+    tty_progress = sys.stderr.isatty() and not args.quiet and total > 200
+
     async def worker():
-        pass
+        while True:
+            try: 
+                port = next(state.port_iter) # atomic in asyncio: no locks needed
+            
+            except StopIteration:
+                return
+            res = await probe_port(host, port, args.timeout, args.retries, limiter)
+            state.done += 1
+            if res.state == "open":
+                state.open.append(res)
+                if args.quiet:
+                    emit(f"{args.ip}:{port}")
+                else:
+                    emit(f"{C.GREEN}[+]{C.END} {port}/tcp open {C.DIM}({res.rtt_ms} ms){C.END}")
+            elif res.state == "closed":
+                state.closed += 1
+            else:
+                state.filtered += 1
 
     async def progress():
-        pass
+        global PROGRESS_ACTIVE
+        PROGRESS_ACTIVE = True
+        try:
+            while True:
+                await asyncio.sleep(0.4)
+                pct = state.done * 100 // total
+                sys.stderr.write(f"\r\033[K{C.DIM}[~]{state.done}/{total} ports ({pct}%) " f"- {len(state.open)} open{C.END}")
+                sys.stderr.flush()
+        finally:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+            PROGRESS_ACTIVE = False
+        
+    n_workers = max(1,min(args.workers, total))
+    prog_task = asyncio.create_task(progress()) if tty_progress else None
+
+    try:
+        await asyncio.gather(*(worker() for _ in range(n_workers)))
+    finally:
+        if prog_task:
+            prog_task.cancel()
+            try:
+                await prog_task
+            except asyncio.CancelledError:
+                pass
+    
+    # Phase 2: Fingerpint only the portts that are actually open
+    if state.open and not args.no_banner and not args.quiet:
+        sni= None if _is_ip(args.ip) else args.ip
+        sem = asyncio.Semaphore(50)
+
+        async def fp(res: PortResult):
+            async with sem:
+                try: 
+                    res.service, res.banner, res.tls = await fingerprint( host,sni,res.port, max(args.timeout, 2.0))
+                except Exception:
+                    res.service = SERVICE_MAP.get(res.port, "unknown") + "?"
+
+        print(f"{C.DIM}[*] Fingerprinting {len(state.open)} open port(s)...{C.END}")
+        await asyncio.gather(*(fp(r) for r in state.open))
+    else:
+        for r in state.open:
+            r.service = SERVICE_MAP.get(r.port, "unknown") + "?"
+
+# #~[Target handling & reporting]~#
 
 def _is_ip(value:str) -> bool:
-    pass
+    for fam in ((socket.AF_INET, socket.AF_INET6)):
+        try:
+            socket.inet_pton(fam, value)
+            return True
+        except OSError:
+            pass
+    return False
 
 async def resolve(target: str) -> str:
-    pass
+    if _is_ip(target):
+        return target
+    loop = asyncio.get_running_loop()
+    infos = await loop.getaddrinfo(target, None, type=socket.SOCK_STREAM)
+    return infos[0][4][0]
 
 def fd_limit_cap(requested: int) -> int:
-    pass
+    """ Dont ask for more sockets than the OS Allows (Linux/macOS) """
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        want = min(hard, 65535) if hard != resource.RLIM_INFINITY else 65535
+
+        if soft < want:
+            try: 
+                resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+                soft = want
+            except (ValueError, OSError):
+                pass
+        return max(10, min(requested, soft - 64))
+    except ImportError:
+        return min(requested, 500) # Windoes: select() limits
 
 def render_table(state: ScanState) -> list[str]:
-    pass
+    rows = sorted(state.open, key=lambda r: r.port)
+    lines = [f"{'PORT': <10}{'STATE': <8}{'SERVICE': <16}INFO"]
+    for r in rows:
+        info = r.banner
+        if r.tls:
+            info = f"[{r.tls}] {info}".strip()
+        lines.append(f"{str(r.port) + '/tcp':<10}{r.state: <8}{r.service:<16}{info}")
+    return lines
 
 def write_reports(args, ip: str, state: ScanState, started:datetime, duration: float) -> None:
-    pass
+    summary = {"scanned": state.done, "open": len(state.open), "closed": state.closed, "filtered": state.filtered}
+    if args.txt:
+        with open(args.txt, 'w', encoding="utf-8") as f:
+            f.write(f"PortVex {__version__} report\n")
+            f.write(f"Target: {args.ip} ({ip})\nStarted: {started.isoformat()}\n")
+            f.write(f"Time  : {duration:.2f}s\n")
+            f.write(f"Summary: {summary}\n\n")
+            f.write("\n".join(render_table(state)) + "\n")
+        print(f"{C.BLUE}[*]{C.END} TXT report saved to {args.txt}")
+    
+    if args.json:
+        doc = {
+            "tool": "PortVex","version": __version__,
+            "target": {"input": args.ip, "ip": ip},
+            "started": started.isoformat(),"duration_s": round(duration, 2), "interrupted": state.interrupted,
+            "options": {"timeout": args.timeout,"workers":args.workers, "retries": args.retries,"rate": args.rate},
+            "summary": summary,
+            "results": [asdict(r) for r in sorted(state.open, key=lambda r: r.port)],
+        }
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(doc, f,indent=2)
+        print(f"{C.BLUE}[*]{C.END} JSON report saved to {args.json}")
 
+# #~[Entry Point]~#
 def selected_ports(args, parser) -> list[int]:
-    pass
+    mode = args.mode
+    if mode is None: 
+        mode = "current" if args.port else "common"
+    if mode == "current":
+        if not args.port:
+            parser.error("--mode current requires -p/--port")
+        return args.port
+    if args.port and mode in ("common", "full"):
+        print(f"{C.YELLOW}[!]{C.END} -p ignored because --mode {mode} was given", file=sys.stderr)
+    return COMMON_PORTS if mode == "common" else list(range(1,65536))
 
 async def amain(args, ports: list[int], state: ScanState) -> str:
-    pass
+    ip = await resolve(args.ip)
+    if not args.quiet:
+        print(f"{C.BLUE}[*]{C.END} Target : {args.ip}" + (f"({ip})" if ip != args.ip else ""))
+        print(f"{C.BLUE}[*]{C.END} Ports : {len(ports)} workers={args.workers} "
+        f"timeout={args.timeout}s retries={args.retries}" + (f" rate={args.rate}/s" if args.rate else ""))
+    await run_scan(ip, ports, args,state)
+    return ip
 
 def main() -> int:
-    pass
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.timeout <=0 or args.workers < 1 or args.retries < 0:
+        parser.error("timeout must be > 0, workers >= 1, retries >= 0")
+    ports = selected_ports(args, parser)
+    args.workers = fd_limit_cap(args.workers)
 
+    if not args.quiet:
+        print(Banner)
+    state = ScanState(ports)
+    started = datetime.now(timezone.utc)
+    ip = args.ip
+    try: 
+        ip = asyncio.run(amain(args, ports, state))
+    except KeyboardInterrupt:
+        state.interrupted = True
+        print(f"\n{C.YELLOW}[!]{C.END} Interrupted - showing partial results", file=sys.stderr)
+    except socket.gaierror as e:
+        print(f"{C.RED}[x]{C.END} Cannot resolve '{args.ip}': {e}",file=sys.stderr)
+        return 2
+    duration = time.monotonic() - state.started
+
+    if args.quiet:
+        return 0
+    print()
+
+    if state.open:
+        print("\n".join(render_table(state)))
+    else:
+        print(f"{C.YELLOW}[-]{C.END} No open ports found.")
+    print(f"\n{C.BOLD} Scanned {state.done}/{len(ports)} ports in {duration:.2f}s{C.END} "
+            f"{C.GREEN}open={len(state.open)}{C.END} closed={state.closed} filtered={state.filtered}")
+    
+    if state.filtered > state.closed and state.filtered > 100:
+        print(f"{C.DIM}[i] Most ports are filtered -> a firewall is probably dropping packets.{C.END}")
+
+    write_reports(args,ip,state,started,duration)
+    return 0
+ 
 if __name__ == "__main__":
     sys.exit(main())
-    
+
+""" Old version
 # #~[Functions]~#
 
 def parse_arguments():
@@ -734,3 +1043,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print_warning("\nScan interrupted by user.")
+"""
