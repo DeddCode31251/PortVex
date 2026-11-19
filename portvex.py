@@ -1,4 +1,3 @@
-
 """
 
 PortVex is a command-line network reconnaissance tool written in Python.
@@ -143,14 +142,14 @@ GENERIC_PROBE = b"\r\n"
 
 class C:
     on = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
-    RED,GREEN,YELLOW,BLUE,CYAN,DIM,BOLD,END = (
+    RED,GREEN,YELLOW,BLUE,CYAN,MAGENTA,ORANGE,DIM,BOLD,END = (
         ('\033[91m', '\033[92m', '\033[93m', '\033[94m',
-        '\033[96m', '\033[2m', '\033[1m', '\033[0m') if on else ("",) * 8
+        '\033[96m', '\033[95m', '\033[38;5;208m', '\033[2m', '\033[1m', '\033[0m') if on else ("",) * 10
     )
 
 # Banner
 
-Banner = rf"""{C.CYAN}
+Banner = rf"""{C.RED}
 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡄⣄⣴⣦⣤⣄⣤⡄⣀⣠⡄⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣂⣞⣿⣿⣿⣿⣿⣿⣿⣯⣿⣿⣿⣿⣿⣷⡐⣾⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -164,11 +163,11 @@ Banner = rf"""{C.CYAN}
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡻⣿⣳⣿⣿⣾⣿⣿⣿⣿⡟⠋⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⠟⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣿⠏⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠑⠙⠋⠏⠛⠛⠛⠓⠈⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
- ___           _   __     __ 
+{C.BOLD} ___           _   __     __ 
 | _ \___ _ _ _| |_ \ \   / /____ __
 |  _/ _ \ '_|_  _|  \ \ / / -_) \ /
 |_| \___/_|   |_|    \_/ \___/_\_\  v{__version__}
- {C.END}{C.DIM} async TCP recon - use only on authorised
+ {C.END}{C.YELLOW} async TCP recon - use only on authorised
  targets{C.END}
 """
 
@@ -447,7 +446,7 @@ async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
                 if args.quiet:
                     emit(f"{args.ip}:{port}")
                 else:
-                    emit(f"{C.GREEN}[+]{C.END} {port}/tcp open {C.DIM}({res.rtt_ms} ms){C.END}")
+                    emit(f"{C.GREEN}{C.BOLD}[+]{C.END} {C.BOLD}{C.CYAN}{port}/tcp{C.END} {C.GREEN}open{C.END} {C.DIM}({res.rtt_ms} ms){C.END}")
             elif res.state == "closed":
                 state.closed += 1
             else:
@@ -460,7 +459,7 @@ async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
             while True:
                 await asyncio.sleep(0.4)
                 pct = state.done * 100 // total
-                sys.stderr.write(f"\r\033[K{C.DIM}[~]{state.done}/{total} ports ({pct}%) " f"- {len(state.open)} open{C.END}")
+                sys.stderr.write(f"\r\033[K{C.YELLOW}[~]{C.END}{C.DIM} {state.done}/{total} ports ({pct}%) " f"- {len(state.open)} open{C.END}")
                 sys.stderr.flush()
         finally:
             sys.stderr.write("\r\033[K")
@@ -492,7 +491,7 @@ async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
                 except Exception:
                     res.service = SERVICE_MAP.get(res.port, "unknown") + "?"
 
-        print(f"{C.DIM}[*] Fingerprinting {len(state.open)} open port(s)...{C.END}")
+        print(f"{C.BLUE}[*]{C.END} {C.DIM}Fingerprinting {len(state.open)} open port(s)...{C.END}")
         await asyncio.gather(*(fp(r) for r in state.open))
     else:
         for r in state.open:
@@ -533,14 +532,44 @@ def fd_limit_cap(requested: int) -> int:
     except ImportError:
         return min(requested, 500) # Windoes: select() limits
 
-def render_table(state: ScanState) -> list[str]:
+# Services that are commonly attacked / misconfigured -> shown in red
+RISKY_SERVICES = {
+    'telnet','ftp','ftp-data','ftp-alt','tftp','smb','netbios-ssn','msrpc','rpcbind','nfs',
+    'rdp','vnc','snmp','redis','mongodb','memcached','docker','mssql','mysql','postgresql',
+    'elasticsearch','rsync','metasploit','kibana','rmi','weblogic','consul',
+}
+
+def service_color(service: str) -> str:
+    """ red = risky, green = encrypted/standard, yellow = web, magenta = unknown, cyan = other """
+    base = service.rstrip("?").split("/")[0]
+    if base == "unknown":
+        return C.MAGENTA
+    if base in RISKY_SERVICES:
+        return C.RED
+    if base.startswith("https") or base in ("ssh", "ldaps", "smtps", "imaps", "pop3s"):
+        return C.GREEN
+    if base.startswith("http"):
+        return C.YELLOW
+    return C.CYAN
+
+def render_table(state: ScanState, color: bool = False) -> list[str]:
     rows = sorted(state.open, key=lambda r: r.port)
-    lines = [f"{'PORT': <10}{'STATE': <8}{'SERVICE': <16}INFO"]
+    head = f"{'PORT': <10}{'STATE': <8}{'SERVICE': <16}INFO"
+    lines = [f"{C.BOLD}{head}{C.END}" if color else head]
     for r in rows:
         info = r.banner
         if r.tls:
             info = f"[{r.tls}] {info}".strip()
-        lines.append(f"{str(r.port) + '/tcp':<10}{r.state: <8}{r.service:<16}{info}")
+        port_s = f"{str(r.port) + '/tcp':<10}"
+        state_s = f"{r.state: <8}"
+        serv_s = f"{r.service:<16}"
+        if color: # pad first, colour after, so columns stay aligned
+            port_s = f"{C.BOLD}{C.CYAN}{port_s}{C.END}"
+            state_s = f"{C.GREEN}{state_s}{C.END}"
+            serv_s = f"{service_color(r.service)}{serv_s}{C.END}"
+            if r.tls:
+                info = f"{C.MAGENTA}[{r.tls}]{C.END} {r.banner}".strip()
+        lines.append(f"{port_s}{state_s}{serv_s}{info}")
     return lines
 
 def write_reports(args, ip: str, state: ScanState, started:datetime, duration: float) -> None:
@@ -552,7 +581,7 @@ def write_reports(args, ip: str, state: ScanState, started:datetime, duration: f
             f.write(f"Time  : {duration:.2f}s\n")
             f.write(f"Summary: {summary}\n\n")
             f.write("\n".join(render_table(state)) + "\n")
-        print(f"{C.BLUE}[*]{C.END} TXT report saved to {args.txt}")
+        print(f"{C.GREEN}[*]{C.END} TXT report saved to {args.txt}")
     
     if args.json:
         doc = {
@@ -565,7 +594,7 @@ def write_reports(args, ip: str, state: ScanState, started:datetime, duration: f
         }
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(doc, f,indent=2)
-        print(f"{C.BLUE}[*]{C.END} JSON report saved to {args.json}")
+        print(f"{C.GREEN}[*]{C.END} JSON report saved to {args.json}")
 
 # #~[Entry Point]~#
 def selected_ports(args, parser) -> list[int]:
@@ -583,7 +612,7 @@ def selected_ports(args, parser) -> list[int]:
 async def amain(args, ports: list[int], state: ScanState) -> str:
     ip = await resolve(args.ip)
     if not args.quiet:
-        print(f"{C.BLUE}[*]{C.END} Target : {args.ip}" + (f"({ip})" if ip != args.ip else ""))
+        print(f"{C.BLUE}[*]{C.END} Target : {C.BOLD}{C.CYAN}{args.ip}{C.END}" + (f"({ip})" if ip != args.ip else ""))
         print(f"{C.BLUE}[*]{C.END} Ports : {len(ports)} workers={args.workers} "
         f"timeout={args.timeout}s retries={args.retries}" + (f" rate={args.rate}/s" if args.rate else ""))
     await run_scan(ip, ports, args,state)
@@ -606,7 +635,7 @@ def main() -> int:
         ip = asyncio.run(amain(args, ports, state))
     except KeyboardInterrupt:
         state.interrupted = True
-        print(f"\n{C.YELLOW}[!]{C.END} Interrupted - showing partial results", file=sys.stderr)
+        print(f"\n{C.RED}[!]{C.END} Interrupted - showing partial results", file=sys.stderr)
     except socket.gaierror as e:
         print(f"{C.RED}[x]{C.END} Cannot resolve '{args.ip}': {e}",file=sys.stderr)
         return 2
@@ -617,21 +646,21 @@ def main() -> int:
     print()
 
     if state.open:
-        print("\n".join(render_table(state)))
+        print("\n".join(render_table(state, color=True)))
     else:
-        print(f"{C.YELLOW}[-]{C.END} No open ports found.")
+        print(f"{C.RED}[-]{C.END} {C.RED}No open ports found.{C.END}")
     print(f"\n{C.BOLD} Scanned {state.done}/{len(ports)} ports in {duration:.2f}s{C.END} "
-            f"{C.GREEN}open={len(state.open)}{C.END} closed={state.closed} filtered={state.filtered}")
+            f"{C.GREEN}open={len(state.open)}{C.END} {C.DIM}closed={state.closed}{C.END} {C.ORANGE}filtered={state.filtered}{C.END}")
     
     if state.filtered > state.closed and state.filtered > 100:
-        print(f"{C.DIM}[i] Most ports are filtered -> a firewall is probably dropping packets.{C.END}")
+        print(f"{C.ORANGE}[i] Most ports are filtered -> a firewall is probably dropping packets.{C.END}")
 
     write_reports(args,ip,state,started,duration)
     return 0
  
 if __name__ == "__main__":
     sys.exit(main())
-
+    
 """ Old version
 # #~[Functions]~#
 
