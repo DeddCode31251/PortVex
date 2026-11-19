@@ -4,6 +4,7 @@
 PortVex is a command-line network reconnaissance tool written in Python.
 Made by: Deadcode
 Github: https://github.com/DeddCode31251/PortVex
+Only Scan Systems you own or are explicitly authorised to test.
 
 """
 
@@ -14,62 +15,142 @@ import ipaddress
 import socket
 import json
 import sys
+import asyncio
+import errno
+import os
+import re
+import ssl
 
+
+from dataclasses import asdict, dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-VERSION = "1.0.0"
+__version__ = "2.0.0"
 
-# #~Terminal Colors~#
-class Colors:
-    # Basic colors
-    RED           = "\033[91m"
-    GREEN         = "\033[92m"
-    YELLOW        = "\033[93m"
-    BLUE          = "\033[94m"
-    CYAN          = "\033[96m"
-    WHITE         = "\033[97m"
-    PURPLE        = "\033[95m"
-    RESET         = "\033[0m"
+# #~[Static Data]~#
+SERVICE_MAP = {
+    20: 'ftp-data',
+    21: 'ftp',
+    22: 'ssh',
+    23: 'telnet',
+    25: 'smtp',
+    53: 'dns',
+    69: 'tftp',
+    80: 'http',
+    81: 'http',
+    88: 'kerberos',
+    110: 'pop3',
+    111: 'rpcbind',
+    113: 'ident',
+    119: 'nntp',
+    123: 'ntp',
+    135: 'msrpc',
+    139: 'netbios-ssn',
+    143: 'imap',
+    161: 'snmp',
+    179: 'bgp',
+    389: 'ldap',
+    443: 'https',
+    445: 'smb',
+    465: 'smtps',
+    514: 'syslog',
+    515: 'printer',
+    587: 'submission',
+    593: 'http-rpc',
+    636: 'ldaps',
+    873: 'rsync',
+    902: 'vmware',
+    993: 'imaps',
+    995: 'pop3s',
+    1080: 'socks',
+    1099: 'rmi',
+    1433: 'mssql',
+    1521: 'oracle',
+    1723: 'pptp',
+    2049: 'nfs',
+    2121: 'ftp-alt',
+    2375: 'docker',
+    2376: 'docker-tls',
+    3000: 'http-dev',
+    3128: 'squid',
+    3306: 'mysql',
+    3389: 'rdp',
+    3690: 'svn',
+    4369: 'epmd',
+    4444: 'metasploit/shell',
+    5000: 'http-dev',
+    5432: 'postgresql',
+    5601: 'kibana',
+    5672: 'amqp',
+    5900: 'vnc',
+    5985: 'winrm',
+    5986: 'winrm-tls',
+    6379: 'redis',
+    6443: 'kubernetes-api',
+    7001: 'weblogic',
+    8000: 'http-alt',
+    8008: 'http-alt',
+    8080: 'http-proxy',
+    8081: 'http-alt',
+    8443: 'https-alt',
+    8500: 'consul',
+    8888: 'http-alt',
+    9000: 'http-alt',
+    9090: 'http-alt',
+    9092: 'kafka',
+    9200: 'elasticsearch',
+    9300: 'elasticsearch',
+    9443: 'https-alt',
+    10000: 'webmin',
+    11211: 'memcached',
+    27017: 'mongodb',
+    50000: 'jenkis-agent',
+}
 
-    # Bright colors
-    BRIGHT_RED    = "\033[1;91m"
-    BRIGHT_GREEN  = "\033[1;92m"
-    BRIGHT_YELLOW = "\033[1;93m"
-    BRIGHT_BLUE   = "\033[1;94m"
-    BRIGHT_CYAN   = "\033[1;96m"
-    BRIGHT_WHITE  = "\033[1;97m"
-    BRIGHT_PURPLE = "\033[1;95m"
+# Common Ports List
+COMMON_PORTS = sorted(SERVICE_MAP)
 
-    # Formatting
-    BOLD          = "\033[1m"
-    DIM           = "\033[2m"
-    UNDERLINE     = "\033[4m" 
+# HTTP Ports List
+HTTP_PORTS = {80,81,3000,5000,5601,8000,8008,8080,8081,8888,9000,9090,9200,10000,2375}
 
-    # Backgrounds
-    BG_RED        = "\033[41m"
-    BG_GREEN      = "\033[42m"
-    BG_BLUE       = "\033[44m"
-    BG_PURPLE     = "\033[45m"
+# TLS Ports List
+TLS_PORTS = {443,465,636,853,993,995,2376,5986,6443,8443,9443}
 
+# Banner Signatures (regex on first line/ Whole text, service, version group)
+SIGNATURES = [
+    (re.compile(r"^SSH-\d\.\d+-(\S+)"), "ssh", 1),
+    (re.compile(r"^220[ -].*\b(vsFTPd|ProFTPD|Pure-FTPd|FileZilla|Microsoft FTP)[^\r\n]*", re.I), "ftp", 0),
+    (re.compile(r"^220[ -].*\b(ESMTP|SMTP|Postfix|Exim|Sendmail)\b[^\r\n]*", re.I), "smtp", 0),
+    (re.compile(r"^220[ -][^\r\n]*FTP[^\r\n]*", re.I), "ftp", 0),
+    (re.compile(r"^\+OK[^\r\n]*"), "pop3", 0),
+    (re.compile(r"^\* OK[^\r\n]*IMAP[^\r\n]*", re.I), "imap", 0),
+    (re.compile(r"^RFB (\d{3}\.\d{3})"), "vnc", 1),
+    (re.compile(r"^\+PONG|^-NOAUTH|^-DENIED|^-ERR wrong number"), "redis", 0),
+    (re.compile(r"^HTTP/\d(?:\.\d)? \d{3}"), "http", 0),
+    (re.compile(r"^AMQP"), "amqp", 0),
+    (re.compile(r"^-ERR|^\x00\x00"), "unknown", 0),
+]
 
-# #~[Important Functions]~#
+# Port-specific probes sent when the server stays silent 
+PROBES = {
+    6379: b"PING\r\n"
+}
+HTTP_PROBE = b"HEAD / HTTP/1.0\r\nHOST: %s\r\nUser-Agent:PortVex\r\n\r\n"
+GENERIC_PROBE = b"\r\n"
 
-# Loading function
-def loading_UI(timer):
-    print("Loading.")
-    time.sleep(timer)
-    print("Loading..")
-    time.sleep(timer)
-    print("Loading...")
-    time.sleep(0.5)
+# #~[Output Helpers]~#
 
-
-# #~[Welcome]~#
-#print("PORTVEX has Started!")
+class C:
+    on = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    RED,GREEN,YELLOW,BLUE,CYAN,DIM,BOLD,END = (
+        ('\033[91m', '\033[92m', '\033[93m', '\033[94m',
+        '\033[96m', '\033[2m', '\033[1m', '\033[0m') if on else ("",) * 8
+    )
 
 # Banner
-Banner = rf"""
+
+Banner = rf"""{C.CYAN}
 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡄⣄⣴⣦⣤⣄⣤⡄⣀⣠⡄⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣂⣞⣿⣿⣿⣿⣿⣿⣿⣯⣿⣿⣿⣿⣿⣷⡐⣾⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -83,14 +164,166 @@ Banner = rf"""
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡻⣿⣳⣿⣿⣾⣿⣿⣿⣿⡟⠋⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⠟⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣿⠏⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠑⠙⠋⠏⠛⠛⠛⠓⠈⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-
+ ___           _   __     __ 
+| _ \___ _ _ _| |_ \ \   / /____ __
+|  _/ _ \ '_|_  _|  \ \ / / -_) \ /
+|_| \___/_|   |_|    \_/ \___/_\_\  v{__version__}
+ {C.END}{C.DIM} async TCP recon - use only on authorised
+ targets{C.END}
 """
-"""print()
-time.sleep(1)
-print("Type -h or -help for guide")
-print("CLN Started")
-loading_UI(0.5)"""
 
+PROGRESS_ACTIVE = False
+
+def emit(msg: str) -> None:
+    """ Print a line without colliding with the in-place progress line."""
+    if PROGRESS_ACTIVE:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+    print(msg, flush=True)
+
+# #~[Data Model]~#
+@dataclass
+class PortResult:
+    port: int
+    state: str # open | closed | filtered
+    service: str = ""
+    banner: str = ""
+    tls: str = "" # e.g. "TLSv1.3"
+    rtt_ms: float = 0.0
+
+class ScanState:
+    """Shared mutable state so CTRL+C can still report partial results."""
+
+    def __init__(self, ports: list[int]):
+        self.ports = ports
+        self.port_iter = iter(ports)
+        self.done = 0
+        self.open: list[PortResult] = []
+        self.closed = 0
+        self.filtered = 0
+        self.started = time.monotonic()
+        self.interrupted = False
+
+# #~[Argument parsing helpers]~#
+def parse_ports(spec: str) -> list[int]:
+    """ '22,80,8000-8100' -> sorted unique list, '-' or 'all' -> 1-65535 """
+    spec = spec.strip().lower()
+    if spec in ('-', 'all'):
+        return list(range(1,65536))
+    ports: set[int] = set()
+    for part in spec.split('.'):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if '-' in part:
+                lo_s, hi_s = part.split('-', 1)
+                lo, hi = int(lo_s), int(hi_s)
+            else:
+                lo = hi = int(part)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"invalid port or range: '{part}'")
+        if not (1 <= lo <= hi <= 65535):
+            raise argparse.ArgumentTypeError(f"Port out of range (1-65535): '{part}'")
+            ports.update(range(lo, hi+1))
+        if not ports:
+            raise argparse.ArgumentTypeError('no ports given')
+        return sorted(ports)
+
+def build_parser () -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="portvex",
+        description="PortVex - async TCP port scanner with service/banner detection.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog(
+            "examples:\n"
+            "   portvex.py -i 10.10.10.5 --mode common\n"
+            "   portvex.py -i 10.10.10.5 -p 20,80,8000-8100\n"
+            "   portvex.py -i target.htb --mode full -w 1000 -t 1\n"
+            "   portvex.py -i 10.10.10.5 --mode full -q | cut -d: -f2 | paste -sd,\n"
+            ""
+        ),
+    )
+
+    p.add_argument("-i", "--ip", required=True, help="target IPv4/IPv6 address or hostname")
+    p.add_argument("-p", "--port", type=parse_ports, help="ports: 80 | 22,80,443 | 1-1024 | 22,8000-8100 | - (all)")
+    p.add_argument("--mode", choices=["current","common","full"], default=None,
+    help= "current = only -p, common=built-in list, full = 1-65535")
+    p.add_argument("-t", "--timeout", type=float, default=1.5,
+    help="connect timeout in seconds(default 1.5)")
+    p.add_argument('-w', '--workers',type=int, default=500,
+    help="max concurrent connections (default 500)")
+    p.add_argument('-r', '--retries', type=int, default=1,
+    help="retries for time-out ports (default 1)")
+    p.add_argument('--rate', type=float, default=0, 
+    help="max new connections per second (0 = unlimited)")
+    p.add_argument('--no-banner', aaction="store_true", 
+    help="skip banner grabbing/service detection (faster)")
+    p.add_argument('-q', '--quiet', action='store_true',
+    help="print only 'host:port' per open port (pipe-friendly, implies --no-banner)")
+    p.add_argument('--txt', metavar="FILE", 
+    help="export report as text")
+    p.add_argument('--json',metavar="FILE", help="export report as JSON")
+    p.add_argument('--version', action="version", version=f"PortVex {__version__}")
+    
+    return p
+
+class RateLimiter:
+    pass
+
+async def _close(writer: asyncio.Stream.Writer) -> None:
+    pass
+
+async def probe_port(host: str, port: int, timeout: float, retries: int, limiter: RateLimiter) -> PortResult:
+    pass
+
+async def _talk(host: str, sni: str | None, port: int, use_tls: bool, passive: bool, probe:bytes | None, timeout: float):
+    pass
+
+def _clean(data: bytes) -> str:
+    pass
+
+def identify(port: int, data:bytes, tls:str) -> tuple[str,str]:
+    pass
+
+async def fingerprint(host: str, sni:str | None, port:int, timeout: float) -> tuple[str, str, str]:
+    async def attempt(user_tls: bool):
+        pass
+
+async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
+    async def worker():
+        pass
+
+    async def progress():
+        pass
+
+def _is_ip(value:str) -> bool:
+    pass
+
+async def resolve(target: str) -> str:
+    pass
+
+def fd_limit_cap(requested: int) -> int:
+    pass
+
+def render_table(state: ScanState) -> list[str]:
+    pass
+
+def write_reports(args, ip: str, state: ScanState, started:datetime, duration: float) -> None:
+    pass
+
+def selected_ports(args, parser) -> list[int]:
+    pass
+
+async def amain(args, ports: list[int], state: ScanState) -> str:
+    pass
+
+def main() -> int:
+    pass
+
+if __name__ == "__main__":
+    sys.exit(main())
+    
 # #~[Functions]~#
 
 def parse_arguments():
@@ -169,44 +402,6 @@ def parse_arguments():
         parser.error("Workers must be between 1 and 500.")
     
     return args
-
-# Common Ports List
-COMMON_PORTS = [
-    
-    # File Transffer
-    20,21,
-
-    # Remote Access
-    22,23,
-    3389,5900,
-
-    # Mail Services
-    25,110,143,465,587,993,995,
-
-    # Web Services
-    80,443,8080,8000,8443,8888,
-
-    # DNS & Network Services
-    53, #67,68,69,123,161,162,
-    
-    # Database Services
-    1433,1521,3306,5432,27017,6379,
-
-    # File Sharing
-    139,445,
-
-    # Directory Services
-    389,636,
-
-    # Application Services
-    3000,5000,5001,9000,
-
-    # Monitoring & Management
-    9090, 9100,
-
-    # Other common Services
-    111,135,1723,2049, 5901,
-]
 
 # Port Selection function
 def get_ports(mode, port=None):
@@ -462,45 +657,24 @@ def print_section(title):
     print("*" * 10)
 # Print-info function(loading)
 def print_info(message):
-    print(f"{Colors.CYAN}[ + ]{Colors.RESET} {message}")
+    print(f"{message}")
 
 # Print-Success function(loading)
 def print_success(message):
-    print(f"{Colors.GREEN}[ + ]{Colors.RESET} {message}")
+    print(f"{message}")
 
 # Print-Error function(loading)
 def print_error(message):
-    print(f"{Colors.BRIGHT_RED}[ - ]{Colors.RESET} {message}")
+    print(f"{message}")
 
 # Print-Warning function(loading)
 def print_warning(message):
-    print(f"{Colors.YELLOW}[ ! ]{Colors.RESET} {message}")
+    print(f"{message}")
 
 # Print-Banner function(loading)
 def print_banner():
-    print(f"{Colors.RED}{Colors.BOLD}{Banner}{Colors.RESET}")
+    print(f"{Banner}")
 
-    print(
-        f"{Colors.CYAN}"
-        "             [ "
-        f"{Colors.WHITE}Network Reconnaissance"
-        f"{Colors.CYAN} ]"
-        f"{Colors.RESET}"
-    )
-
-    print(
-        f"{Colors.PURPLE}"
-        f"              Version: {Colors.WHITE}{VERSION}"
-        f"{Colors.RESET}"
-    )
-
-    print(
-        f"{Colors.DIM}"
-        "        Developed by Deadcode"
-        f"{Colors.RESET}"
-    )
-
-    print(f"{Colors.RED}{'*' * 10}{Colors.RESET}")
 
 
 # #~[Main loop]~#
