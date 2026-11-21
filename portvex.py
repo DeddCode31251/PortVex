@@ -19,6 +19,7 @@ import errno
 import os
 import re
 import ssl
+import csv
 
 
 from dataclasses import asdict, dataclass
@@ -264,6 +265,7 @@ def build_parser () -> argparse.ArgumentParser:
     help="export report as text")
     p.add_argument('--json',metavar="FILE", help="export report as JSON")
     p.add_argument('--version', action="version", version=f"PortVex {__version__}")
+    p.add_argument('--csv', metavar="FILE", help="export scan results as CSV")
     
     return p
 
@@ -581,8 +583,9 @@ def write_reports(args, ip: str, state: ScanState, started:datetime, duration: f
             f.write(f"Time  : {duration:.2f}s\n")
             f.write(f"Summary: {summary}\n\n")
             f.write("\n".join(render_table(state)) + "\n")
-        print(f"{C.GREEN}[*]{C.END} TXT report saved to {args.txt}")
-    
+        if not args.quiet:
+            print(f"{C.GREEN}[*]{C.END} TXT report saved to {args.txt}")
+
     if args.json:
         doc = {
             "tool": "PortVex","version": __version__,
@@ -594,8 +597,59 @@ def write_reports(args, ip: str, state: ScanState, started:datetime, duration: f
         }
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(doc, f,indent=2)
-        print(f"{C.GREEN}[*]{C.END} JSON report saved to {args.json}")
+        if not args.quiet:
+            print(f"{C.GREEN}[*]{C.END} JSON report saved to {args.json}")
+    if args.csv:
+        fieldnames = [
+            "target",
+            "resolved_ip",
+            "port",
+            "protocol",
+            "state",
+            "service",
+            "banner",
+            "tls"
+            "rtt_ms"
+        ]
 
+        try:
+            with open(args.csv, 'w',newline="",encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=fieldnames
+                )
+
+                # Write CSV column names
+                writer.writeheader()
+
+                # Write each open port
+                for result in sorted(
+                    state.open,
+                    key=lambda r:r.port
+                ):
+                    writer.writerow({
+                        "target": args.ip,
+                        "resolved_ip": ip,
+                        "port": result.port,
+                        "protocol": "tcp",
+                        "state": result.state,
+                        "service": result.service,
+                        "banner": result.banner,
+                        "tls": result.tls,
+                        "rtt_ms": result.rtt_ms
+                    })
+
+            if not args.quiet:
+                print(
+                    f"{C.GREEN}[*]{C.END} "
+                    f"CSV report saved to {args.csv}"
+                )
+
+        except OSError as error:
+            print(
+                f"{C.RED}[x]{C.END} "
+                f"Failed to export CSV: {error}",
+                file=sys.stderr
+            )
 # #~[Entry Point]~#
 def selected_ports(args, parser) -> list[int]:
     mode = args.mode
@@ -639,10 +693,14 @@ def main() -> int:
     except socket.gaierror as e:
         print(f"{C.RED}[x]{C.END} Cannot resolve '{args.ip}': {e}",file=sys.stderr)
         return 2
+    
     duration = time.monotonic() - state.started
+
+    write_reports(args, ip, state, started, duration)
 
     if args.quiet:
         return 0
+
     print()
 
     if state.open:
@@ -655,7 +713,7 @@ def main() -> int:
     if state.filtered > state.closed and state.filtered > 100:
         print(f"{C.ORANGE}[i] Most ports are filtered -> a firewall is probably dropping packets.{C.END}")
 
-    write_reports(args,ip,state,started,duration)
+    
     return 0
  
 if __name__ == "__main__":
