@@ -185,7 +185,8 @@ def emit(msg: str) -> None:
 @dataclass
 class PortResult:
     port: int
-    state: str # open | closed | filtered
+    protocol: str
+    state: str # open | closed | filtered | open/filtered
     service: str = ""
     banner: str = ""
     tls: str = "" # e.g. "TLSv1.3"
@@ -266,6 +267,7 @@ def build_parser () -> argparse.ArgumentParser:
     p.add_argument('--json',metavar="FILE", help="export report as JSON")
     p.add_argument('--version', action="version", version=f"PortVex {__version__}")
     p.add_argument('--csv', metavar="FILE", help="export scan results as CSV")
+    p.add_argument('--scan-type', choices=['tcp','udp','both'], default='tcp', help="Scan type: tcp,udp,both")
     
     return p
 
@@ -296,6 +298,193 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         await asyncio.wait_for(writer.wait_closed(), 1.0)
     except Exception:
         pass
+async def probe_tcp(
+    host: str,
+    port: int,
+    timeout: float,
+    retries: int,
+    limiter: RateLimiter
+) -> PortResult:
+    """
+    TCP Connect Scan.
+
+    States:
+        open     = TCP connection succeeded.
+        closed   = Connection refused.
+        filtered = Timeout or another network error.
+    """
+
+    loop = asyncio.get_running_loop()
+    state = "filtered"
+
+    for attempt in range(retries + 1):
+
+        # Respect the configured scan rate.
+        await limiter.wait()
+
+        start = loop.time()
+
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=timeout
+            )
+
+            # Calculate response time.
+            rtt = (loop.time() - start) * 1000
+
+            # Connection succeeded, so the port is open.
+            await _close(writer)
+
+            return PortResult(
+                port=port,
+                protocol="tcp",
+                state="open",
+                rtt_ms=round(rtt, 1)
+            )
+
+        except (asyncio.TimeoutError, TimeoutError):
+            # No response before timeout.
+            state = "filtered"
+
+        except ConnectionRefusedError:
+            # The target actively refused the connection.
+            return PortResult(
+                port=port,
+                protocol="tcp",
+                state="closed"
+            )
+
+        except OSError as err:
+
+            # File descriptor limit reached.
+            if err.errno in (errno.EMFILE, errno.ENFILE):
+                await asyncio.sleep(0.2)
+                continue
+
+            # Connection refused.
+            if err.errno == errno.ECONNREFUSED:
+                return PortResult(
+                    port=port,
+                    protocol="tcp",
+                    state="closed"
+                )
+
+            # Other network errors.
+            state = "filtered"
+            break
+
+    return PortResult(
+        port=port,
+        protocol="tcp",
+        state=state
+    )
+
+async def probe_udp(
+    host: str,
+    port: int,
+    timeout: float,
+    retries: int,
+    limiter: RateLimiter,
+    payload: bytes = b""
+) -> PortResult:
+    """
+    UDP Scan.
+
+    States:
+        open          = Received a UDP response.
+        closed        = Received a connection-refused error,
+                        commonly caused by ICMP port unreachable.
+        open|filtered = No response before timeout.
+        filtered      = Another network error.
+    """
+
+    loop = asyncio.get_running_loop()
+
+    family = (
+        socket.AF_INET6 if ":" in host
+        else socket.AF_INET
+    )
+
+    state = "open|filtered"
+
+    for attempt in range(retries + 1):
+
+        await limiter.wait()
+
+        sock = None
+        start = loop.time()
+
+        try:
+            # Create a UDP socket.
+            sock = socket.socket(
+                family,
+                socket.SOCK_DGRAM,
+                socket.IPPROTO_UDP
+            )
+
+            sock.setblocking(False)
+
+            # Associate the socket with the target.
+            sock.connect((host, port))
+
+            # Send our UDP probe.
+            sock.send(payload)
+
+            # Wait for a response.
+            data = await asyncio.wait_for(
+                loop.sock_recv(sock, 4096),
+                timeout=timeout
+            )
+
+            rtt = (loop.time() - start) * 1000
+
+            return PortResult(
+                port=port,
+                protocol="udp",
+                state="open",
+                banner=_clean(data)[:120],
+                rtt_ms=round(rtt, 1)
+            )
+
+        except (asyncio.TimeoutError, TimeoutError):
+
+            # UDP is connectionless.
+            # Silence does not prove the port is closed.
+            state = "open|filtered"
+
+        except ConnectionRefusedError:
+
+            # Commonly indicates ICMP port unreachable.
+            return PortResult(
+                port=port,
+                protocol="udp",
+                state="closed"
+            )
+
+        except OSError as err:
+
+            if err.errno == errno.ECONNREFUSED:
+                return PortResult(
+                    port=port,
+                    protocol="udp",
+                    state="closed"
+                )
+
+            state = "filtered"
+            break
+
+        finally:
+
+            # Always close the socket.
+            if sock is not None:
+                sock.close()
+
+    return PortResult(
+        port=port,
+        protocol="udp",
+        state=state
+    )
 
 async def probe_port(host: str, port: int, timeout: float, retries: int, limiter: RateLimiter) -> PortResult:
     """TCP connect check. Distinguishes open / closed (RST) / filtered (silence)."""
@@ -428,6 +617,11 @@ async def fingerprint(host: str, sni:str | None, port:int, timeout: float) -> tu
     guess = SERVICE_MAP.get(port)
     return (guess + "?" if guess else "unknown"), "", ""
 
+async def run_tcp_scan():
+    pass
+
+async def run_udp_scan():
+    pass
 async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
     global PROGRESS_ACTIVE
     limiter = RateLimiter(args.rate)
@@ -441,7 +635,7 @@ async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
             
             except StopIteration:
                 return
-            res = await probe_port(host, port, args.timeout, args.retries, limiter)
+            res = await probe_tcp(host, port, args.timeout, args.retries, limiter)
             state.done += 1
             if res.state == "open":
                 state.open.append(res)
