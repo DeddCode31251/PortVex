@@ -662,7 +662,7 @@ async def run_tcp_scan(host: str, ports: list[int],args, state: ScanState) -> No
                 else: 
                     emit(
                         f"{C.GREEN}{C.BOLD}[+]{C.END} "
-                        f"{C.BOLD}{C.CYAN}{port}/tcp{C.END} "a
+                        f"{C.BOLD}{C.CYAN}{port}/tcp{C.END} "
                         f"{C.GREEN}open{C.END} "
                         f"{C.DIM}({res.rtt_ms} ms){C.END}"
                     )
@@ -764,7 +764,7 @@ async def run_udp_scan():
 async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
    await run_tcp_scan(
         host,
-        port,
+        ports,
         args,
         state
    )
@@ -800,7 +800,7 @@ def fd_limit_cap(requested: int) -> int:
                 soft = want
             except (ValueError, OSError):
                 pass
-        return max(10, min(requested, soft - 64))
+        return max(1, min(requested, soft - 64))
     except ImportError:
         return min(requested, 500) # Windoes: select() limits
 
