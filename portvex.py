@@ -758,16 +758,78 @@ async def run_tcp_scan(host: str, ports: list[int],args, state: ScanState) -> No
 
 
 
-async def run_udp_scan():
-    """ UDP only Scan"""
+async def run_udp_scan(
+    host: str,
+    ports: list[int],
+    args,
+    state: ScanState
+) -> None:
+    """ UDP only Scan (asynchronous UDP)"""
+    limiter = RateLimiter(args.rate)
+    
+    async def worker():
+        while True:
+            port = next(state.port_iter, None)
+
+            if port is None:
+                return
+
+            # Probe this UDP port.
+            res = await probe_udp(
+                host,
+                port,
+                args.timeout,
+                args.retries,
+                limiter
+            )
+
+            state.done += 1
+
+            if res.state == "open":
+                state.open.append(res)
+
+            elif res.state == "closed":
+                state.closed += 1
+            
+            elif res.state == "open|filtered":
+                state.filtered += 1
+            
+            else:
+                state.filtered += 1
+    
+    # Start Workers
+    workers = [
+        asyncio.create_task(worker())
+        for _ in range(min(args.workers, len(ports)))
+    ] 
+
+    try: 
+        await asyncio.gather(*workers)
+
+    except asyncio.CancelledError:
+        state.interrupted = True
+        raise
+    
+    # Sort results by port.
+    state.open.sort(key=lambda result: result.port)
 
 async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
-   await run_tcp_scan(
-        host,
-        ports,
-        args,
-        state
-   )
+    if args.scan_type == "tcp":
+        await run_tcp_scan(host, ports, args, state)
+
+    elif args.scan_type == "udp":
+        await run_udp_scan(host, ports, args, state)
+
+    elif args.scan_type == "both":
+        await run_tcp_scan(host, ports, args, state)
+
+        # Reset the iterator for UDP
+        state.port_iter = iter(ports)a
+        state.done = 0
+
+        await run_udp_scan(host, ports, args, state)
+    
+
 
 # #~[Target handling & reporting]~#
 
