@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 # #~[Static Data]~#
 SERVICE_MAP = {
