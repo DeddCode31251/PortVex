@@ -617,81 +617,157 @@ async def fingerprint(host: str, sni:str | None, port:int, timeout: float) -> tu
     guess = SERVICE_MAP.get(port)
     return (guess + "?" if guess else "unknown"), "", ""
 
-async def run_tcp_scan():
-    pass
+async def run_tcp_scan(host: str, ports: list[int],args, state: ScanState) -> None:
+    """ TCP only Scan """
 
-async def run_udp_scan():
-    pass
-async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
     global PROGRESS_ACTIVE
+
     limiter = RateLimiter(args.rate)
     total = len(ports)
-    tty_progress = sys.stderr.isatty() and not args.quiet and total > 200
 
+    if total == 0:
+        return
+    
+    tty_progress = (
+        sys.stderr.isatty()
+        and not args.quiet
+        and total > 200
+    )
+
+    # Workers: Scans ports one by one
     async def worker():
         while True:
-            try: 
+            try:
                 port = next(state.port_iter) # atomic in asyncio: no locks needed
-            
             except StopIteration:
                 return
-            res = await probe_tcp(host, port, args.timeout, args.retries, limiter)
+            # Probe this TCP port.
+            res = await probe_tcp(
+                host,
+                port,
+                args.timeout,
+                args.retries,
+                limiter
+            )
+
             state.done += 1
+
+            # Process the result
             if res.state == "open":
                 state.open.append(res)
+
                 if args.quiet:
                     emit(f"{args.ip}:{port}")
-                else:
-                    emit(f"{C.GREEN}{C.BOLD}[+]{C.END} {C.BOLD}{C.CYAN}{port}/tcp{C.END} {C.GREEN}open{C.END} {C.DIM}({res.rtt_ms} ms){C.END}")
+
+                else: 
+                    emit(
+                        f"{C.GREEN}{C.BOLD}[+]{C.END} "
+                        f"{C.BOLD}{C.CYAN}{port}/tcp{C.END} "a
+                        f"{C.GREEN}open{C.END} "
+                        f"{C.DIM}({res.rtt_ms} ms){C.END}"
+                    )
             elif res.state == "closed":
                 state.closed += 1
             else:
                 state.filtered += 1
-
+            
+    # Progress Display
     async def progress():
         global PROGRESS_ACTIVE
         PROGRESS_ACTIVE = True
         try:
-            while True:
+            while state.done < total:
                 await asyncio.sleep(0.4)
-                pct = state.done * 100 // total
-                sys.stderr.write(f"\r\033[K{C.YELLOW}[~]{C.END}{C.DIM} {state.done}/{total} ports ({pct}%) " f"- {len(state.open)} open{C.END}")
+                percentage = state.done * 100 // total
+                sys.stderr.write(
+                    f"\r\033[K"
+                    f"{C.YELLOW}[~]{C.END}"
+                    f"{C.DIM} {state.done}/{total} ports "
+                    f"({percentage}%)"
+                    f"- {len(state.open)} open{C.END}"
+                )
                 sys.stderr.flush()
         finally:
             sys.stderr.write("\r\033[K")
             sys.stderr.flush()
             PROGRESS_ACTIVE = False
-        
-    n_workers = max(1,min(args.workers, total))
-    prog_task = asyncio.create_task(progress()) if tty_progress else None
+    
+    # Start concurrent workers
+    worker_count = max(1, min(args.workers, total))
+    
+    progress_task = (
+        asyncio.create_task(progress())
+        if tty_progress
+        else None
+    )
 
     try:
-        await asyncio.gather(*(worker() for _ in range(n_workers)))
+        await asyncio.gather(
+            *(worker() for _ in range(worker_count))
+        )
     finally:
-        if prog_task:
-            prog_task.cancel()
+        if progress_task:
+            progress_task.cancel()
+
             try:
-                await prog_task
+                await progress_task
             except asyncio.CancelledError:
                 pass
     
-    # Phase 2: Fingerpint only the portts that are actually open
+    # Fingerprint open TCP ports
+
     if state.open and not args.no_banner and not args.quiet:
-        sni= None if _is_ip(args.ip) else args.ip
-        sem = asyncio.Semaphore(50)
-
-        async def fp(res: PortResult):
-            async with sem:
-                try: 
-                    res.service, res.banner, res.tls = await fingerprint( host,sni,res.port, max(args.timeout, 2.0))
+        sni = None if _is_ip(args.ip) else args.ip
+        semaphore = asyncio.Semaphore(50)
+        
+        async def fingerprint_worker(res: PortResult):
+            async with semaphore:
+                try:
+                    (
+                        res.service,
+                        res.banner,
+                        res.tls
+                    ) = await fingerprint(
+                        host,
+                        sni,
+                        res.port,
+                        max(
+                            args.timeout, 2.0
+                        )
+                    )
                 except Exception:
-                    res.service = SERVICE_MAP.get(res.port, "unknown") + "?"
+                    res.service = (
+                        SERVICE_MAP.get(res.port, "unknown") + "?"
+                    )
+        print(
+            f"{C.BLUE}[*]{C.END} "
+            f"{C.DIM}Fingerprinting"
+            f"{len(state.open)} open TCP port(s)...{C.END}"
+        )
 
-        print(f"{C.BLUE}[*]{C.END} {C.DIM}Fingerprinting {len(state.open)} open port(s)...{C.END}")
-        await asyncio.gather(*(fp(r) for r in state.open))
+        await asyncio.gather(
+            *(fingerprint_worker(res) for res in state.open) 
+        )
     else:
-        for r in state.open:
-            r.service = SERVICE_MAP.get(r.port, "unknown") + "?"
+
+        # Basic service-name guesses when fingerprinting is disabled
+        for res in state.open:
+            res.service = (
+                SERVICE_MAP.get(res.port, "unknown") + "?"
+            )
+
+
+
+async def run_udp_scan():
+    """ UDP only Scan"""
+
+async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
+   await run_tcp_scan(
+        host,
+        port,
+        args,
+        state
+   )
 
 # #~[Target handling & reporting]~#
 
