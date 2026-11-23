@@ -6,7 +6,7 @@ PortVex is a student project, its goal is to build a Cybersecurity/Penetration-t
 
 Only scan systems you own or have clear permission to test (your own lab, CTF machines, in-scope bug bounty targets).
 
-Current version: **2.0.0**
+Current version: **2.1.0**
 
 # Preview
 <img width="868" height="725" alt="Screenshot From 2026-11-19 22-11-50" src="https://github.com/user-attachments/assets/f10e3de6-401f-4068-8560-4238cb7fac0b" />
