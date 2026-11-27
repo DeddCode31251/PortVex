@@ -952,7 +952,7 @@ def fd_limit_cap(requested: int) -> int:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         want = min(hard, 65535) if hard != resource.RLIM_INFINITY else 65535
 
-        if soft <head want:
+        if soft < want:
             try: 
                 resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
                 soft = want
@@ -1010,7 +1010,7 @@ def generate_html_report(args, ip: str, state: ScanState, started: datetime,dura
     """
 
     # Escape values before inserting them into HTML.
-    target = html.escape(str,(args.ip))
+    target = html.escape(str(args.ip))
     resolved_ip = html.escape(str(ip))
     version = html.escape(str(__version__))
     scan_type = html.escape(str(args.scan_type).upper())
@@ -1071,7 +1071,7 @@ def generate_html_report(args, ip: str, state: ScanState, started: datetime,dura
 
     results_html = "\n".join(rows)
 
-    inerrupted_badge = (
+    interrupted_badge = (
         '<span class="badge warning"> INTERRUPTED</span>'
         if state.interrupted
         else '<span class="badge open">COMPLETED</span>'
@@ -1193,7 +1193,7 @@ def generate_html_report(args, ip: str, state: ScanState, started: datetime,dura
         }}
 
         .stat-card {{
-            background: var{--surface};
+            background: var(--surface);
             border: 1px solid var(--border);
         }}
 
