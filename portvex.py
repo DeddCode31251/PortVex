@@ -20,7 +20,7 @@ import os
 import re
 import ssl
 import csv
-
+import html
 
 from dataclasses import asdict, dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -246,33 +246,108 @@ def build_parser () -> argparse.ArgumentParser:
         ),
     )
 
-    p.add_argument("-i", "--ip", required=True, help="target IPv4/IPv6 address or hostname")
-    p.add_argument("-p", "--port", type=parse_ports, help="ports: 80 | 22,80,443 | 1-1024 | 22,8000-8100 | - (all)")
-    p.add_argument("--mode", choices=["current","common","full"], default=None,
-    help= "current = only -p, common=built-in list, full = 1-65535")
-    p.add_argument("-t", "--timeout", type=float, default=1.5,
-    help="connect timeout in seconds(default 1.5)")
-    p.add_argument('-w', '--workers',type=int, default=500,
-    help="max concurrent connections (default 500)")
-    p.add_argument('-r', '--retries', type=int, default=1,
-    help="retries for time-out ports (default 1)")
-    p.add_argument('--rate', type=float, default=0, 
-    help="max new connections per second (0 = unlimited)")
-    p.add_argument('--no-banner', action="store_true", 
-    help="skip banner grabbing/service detection (faster)")
-    p.add_argument('-q', '--quiet', action='store_true',
-    help="print only 'host:port' per open port (pipe-friendly, implies --no-banner)")
-    p.add_argument('--txt', metavar="FILE", 
-    help="export report as text")
-    p.add_argument('--json',metavar="FILE", help="export report as JSON")
-    p.add_argument('--version', action="version", version=f"PortVex {__version__}")
-    p.add_argument('--csv', metavar="FILE", help="export scan results as CSV")
-    p.add_argument('--scan-type', choices=['tcp','udp','both'], default='tcp', help="Scan type: tcp,udp,both")
+    p.add_argument(
+        "-i", "--ip",
+        required=True,
+        help="target IPv4/IPv6 address or hostname"
+    )
+    
+    p.add_argument(
+        "-p", "--port",
+        type=parse_ports,
+        help="ports: 80 | 22,80,443 | 1-1024 | 22,8000-8100 | - (all)"
+    )
+    
+    p.add_argument(
+        "--mode",
+        choices=["current","common","full"],
+        default=None,
+        help= "current = only -p, common=built-in list, full = 1-65535"
+    )
+    
+    p.add_argument(
+        "-t",
+        "--timeout",
+        type=float, 
+        default=1.5,
+        help="connect timeout in seconds(default 1.5)"
+    )
+    
+    p.add_argument(
+        '-w', '--workers',
+        type=int, default=500,
+        help="max concurrent connections (default 500)"
+    )
+    
+    p.add_argument(
+        '-r',
+        '--retries',
+        type=int,
+        default=1,
+        help="retries for time-out ports (default 1)"
+    )
+    
+    p.add_argument(
+        '--rate',
+        type=float,
+        default=0, 
+        help="max new connections per second (0 = unlimited)"
+    )
+    
+    p.add_argument(
+        '--no-banner',
+        action="store_true", 
+        help="skip banner grabbing/service detection (faster)"
+    )
+    
+    p.add_argument(
+        '-q',
+        '--quiet',
+        action='store_true',
+        help="print only 'host:port' per open port (pipe-friendly, implies --no-banner)"
+    )
+    
+    p.add_argument(
+        '--txt',
+        metavar="FILE", 
+        help="export report as text"
+    )
+    
+    p.add_argument(
+        '--json',
+        metavar="FILE",
+        help="export report as JSON"
+    )
+    
+    p.add_argument(
+        '--version',
+        action="version",
+        version=f"PortVex {__version__}"
+    )
+    
+    p.add_argument(
+        '--csv',
+        metavar="FILE",
+        help="export scan results as CSV"
+    )
+    
+    p.add_argument(
+        '--scan-type',
+        choices=['tcp','udp','both'],
+        default='tcp', help="Scan type: tcp,udp,both"
+    )
+    
     p.add_argument(
         "--profile",
         choices=["fast","slow"],
         default="slow",
         help="Scan profile: fast (open ports only) or slow (detailed service detection)"
+    )
+    
+    p.add_argument(
+        '--html',
+        metavar="FILE",
+        help="export scan results as an HTML report"
     )
 
     return p
@@ -877,7 +952,7 @@ def fd_limit_cap(requested: int) -> int:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         want = min(hard, 65535) if hard != resource.RLIM_INFINITY else 65535
 
-        if soft < want:
+        if soft <head want:
             try: 
                 resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
                 soft = want
@@ -927,6 +1002,538 @@ def render_table(state: ScanState, color: bool = False) -> list[str]:
         lines.append(f"{port_s}{state_s}{serv_s}{info}")
     return lines
 
+def generate_html_report(args, ip: str, state: ScanState, started: datetime,duration: float) -> str:
+    """
+    Generate a self-contained HTML scan report.
+
+    All dynamic text is escaped to prevent HTML Injection from remote service banners or else
+    """
+
+    # Escape values before inserting them into HTML.
+    target = html.escape(str,(args.ip))
+    resolved_ip = html.escape(str(ip))
+    version = html.escape(str(__version__))
+    scan_type = html.escape(str(args.scan_type).upper())
+    profile = html.escape(str(args.profile).upper())
+
+    started_text = html.escape(
+        started.strftime("%Y-%m%d %H:%M:%S UTC")
+    )
+
+    finished_text = html.escape(
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    )
+
+    # Statistics
+    total_scanned = state.done
+    open_count = len(state.open)
+    closed_count = state.closed
+    filtered_count = state.filtered
+
+    # Build the open ports table.
+    rows = []
+
+    for result in sorted(
+        state.open,
+        key=lambda r:(r.protocol, r.port)
+    ):
+        port = html.escape(str(result.port))
+        protocol = html.escape(str(result.protocol).upper())
+        port_state = html.escape(str(result.state).upper())
+        service = html.escape(str(result.service or "Unknown"))
+        banner = html.escape(str(result.banner or "No banner detected"))
+        tls = html.escape(str(result.tls or ""))
+        rtt = html.escape(f"{result.rtt_ms:.2f} ms")
+
+        info = banner
+
+        if tls:
+            info = f"{tls} - {banner}"
+
+        rows.append(f"""
+            <tr>
+                <td class="port">{port}/{protocol}</td>
+                <td><span class="badge open">{port_state}</span></td>
+                <td>{service}</td>
+                <td class="banner">{info}</td>
+                <td>{rtt}</td>
+            </tr>
+        """)
+    
+    if not rows:
+        rows.append("""
+            <tr>
+                <td colspan="5" class="empty">
+                    No open ports were found.
+                </td>
+            </tr>
+        """)
+
+    results_html = "\n".join(rows)
+
+    inerrupted_badge = (
+        '<span class="badge warning"> INTERRUPTED</span>'
+        if state.interrupted
+        else '<span class="badge open">COMPLETED</span>'
+    )
+
+    # Complete standalone HTML document.
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="description" content=""PortVex network scan report">
+
+    <title> PortVex Report - {target}</title>
+
+    <style>
+        :root {{
+            --background: #0b1120;
+            --surface: #111c30;
+            --surface-light: #18263d;
+            --border: #263650;
+            --text: #e5edf8;
+            --muted: #91a3ba;
+            --accent: #38bdf8;
+            --green: #22c55e:
+            --red: #ef4444;
+            --orange: #f59e0b;
+        }}
+
+        * {{
+            box-sizing: border-box;
+        }}
+
+        body {{
+            margin: 0;
+            padding: 35px 20px;
+            background: var(--background);
+            color: var(--text);
+            font-family: Arial, Helvetica, sans-serif;
+        }}
+
+        .container {{
+            max-width: 1200px;
+            margin: auto;
+        }}
+
+        header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 30px;
+        }}
+
+        .brand h1 {{
+            margin: 0;
+            font-size: 32px;
+            letter-spacing: 1px;
+        }}
+
+        .brand h1 span {{
+            color: var(--accent);
+        }}
+
+        .subtitle {{
+            color: var(--muted);
+            margin-top: 8px;
+        }}
+
+        .version {{
+            color: var(--muted);
+            font-size: 13px;
+        }}
+
+        .panel {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 22px;
+            margin-bottom: 22p;
+        }}
+
+        .panel h2 {{
+            margin-top: 0;
+            font-size: 19px;
+        }}
+
+        .meta-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+        }}
+
+        .meta-item {{
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }}
+
+        .label {{
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+
+        .value {{
+            font-size: 15px;
+            overflow-wrap: anywhere;
+        }}
+
+        .stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 22px;
+        }}
+
+        .stat-card {{
+            background: var{--surface};
+            border: 1px solid var(--border);
+        }}
+
+        .stat-card .number {{
+            font-size: 30px;
+            font-weight: bold;
+            margin-top: 12px;
+        }}
+
+        .stat-card.open .number {{
+            color: var(--green)
+        }}
+
+        .stat-card.closed .number {{
+            color: var(--red);
+        }}
+
+        .stat-card.filtered .number {{
+            color: var(--orange);
+        }}
+
+        .stat-card.total .number {{
+            color: var(--accent);
+        }}
+
+        .badge {{
+            display: inline-block;
+            padding: 5px 9px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: bold;
+        }}
+
+        .badge.open {{
+            color: var(--green);
+            background: #14532d55;
+        }}
+
+        .badge.warning {{
+            color: var(--orange);
+        }}
+
+        .table-controls {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 18px;
+        }}
+
+        input {{
+            background: var(--surface-light);
+            border: 1px solid var(--border);
+            color: var(--text)
+            padding: 11px 14px;
+            border-radius: 7px;
+            outline: none;
+            width: 280px;
+            max-width: 100%;
+        }}
+
+        input:focus {{
+            border-color: var(--accent);
+        }}
+
+        .table-wrapper {{
+            overflow-x: auto;
+        }}
+
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            min-widt: 650px;
+        }}
+
+        th, td {{
+            text-align: left;
+            padding: 14px
+            border-bottom: 1px solid var(--border);
+        }}
+
+        th {{
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            cursor: pointer;
+            user-select: none;
+        }}
+
+        tbody tr:hover {{
+            background: var(--surface-light);
+        }}
+
+        .port {{
+            color: var(--accent);
+            font-weight: bold;
+        }}
+
+        .banner {{
+            color: var(--muted);
+            max-width: 400px;
+            overflow-wrap: anywhere;
+        }}
+
+        .empty {{
+            text-align: center;
+            color: var(--muted);
+            padding: 35px;
+        }}
+
+        footer {{
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 35px;
+        }}
+
+        button {{
+            background: var(--accent);
+            color: #07111f;
+            border: none;
+            border-radius: 7px;
+            padding: 11px 17px;
+            font-weight: bold;
+            cursor: pointer;
+        }}
+
+        button:hover {{
+            opacity: 0.85;
+        }}
+
+        @media (max-width: 600px) {{
+            body {{
+                padding: 20px 12px;
+            }}
+
+            .brand h1{{
+                font-size: 20px;
+            }}
+
+            .panel {{
+                padding: 16px;
+            }} 
+        }}
+        
+        @media print {{
+            body {{
+                background: white;
+                color: black;
+                padding: 0;
+            }}
+
+            .panel, .stat-card {{
+                background: white;
+                border: 1px solid #ccc;
+                break-inside: avoid;
+            }}
+
+            .label, .subtitle, .version, footer, .banner, th {{
+                color: #555;
+            }}
+
+            .number, .value, td, h1, h2 {{
+                color: black !important;
+            }}
+
+            .table-controls input,
+            .table-controls button {{
+                display: none;
+            }}
+
+            .badge {{
+                border: 1px solid #999;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="brand">
+                <h1>PORT<span>VEX</span></h1>
+                <div class="subtitle">Network Scan Report</div>
+            </div>
+
+            <div>
+                <div class="version">Version {version}</div>
+                {interrupted_badge}
+            </div>
+        </header>
+
+        <section class="panel">
+            <h2> Scan Information</h2>
+
+            <div class="meta-grid">
+                <div class="meta-item">
+                    <span class="label">Target</span>
+                    <span class="value">{target}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Resolved IP</span>
+                    <span class="value">{resolved_ip}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Scan Type</span>
+                    <span class="value">{scan_type}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Profile</span>
+                    <span class="value">{profile}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Started</span>
+                    <span class="value">{started_text}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Finished</span>
+                    <span class="value">{finished_text}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Duration</span>
+                    <span class="value">{duration:.2f}</span>
+                </div>
+
+                <div class="meta-item">
+                    <span class="label">Workers</span>
+                    <span class="value">{args.workers}</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="stats">
+            <div class="stat-card total>
+                <div class="label">Ports Scanned</div>
+                <div class="number">{total_scanned}</div>
+            </div>
+
+            <div class="stat-card total>
+                <div class="label">Open Ports</div>
+                <div class="number">{open_count}</div>
+            </div>
+
+            <div class="stat-card total>
+                <div class="label">Closed Ports</div>
+                <div class="number">{closed_count}</div>
+            </div>
+
+            <div class="stat-card total>
+                <div class="label">Filtered Ports</div>
+                <div class="number">{filtered_count}</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2> Open Ports</h2>
+
+            <div class="table-controls">
+                <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="Search ports, services, banners..."
+                    onkeyup="filterTable()"
+                >
+
+                <button onclick="window.print()">
+                    print / Save PDF
+                </button>
+            </div>
+
+            <div class="table-wrapper">
+                <table id="portsTable">
+                    <thead>
+                        <tr>
+                            <th onclick="sortTable(0)">Port / Protocol</th>                            
+                            <th onclick="sortTable(1)">State</th>
+                            <th onclick="sortTable(2)">Service</th>
+                            <th onclick="sortTable(3)">Banner / Information</th>
+                            <th onclick="sortTable(4)">RTT</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {results_html}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer>
+            Generated by PortVex {version}
+            <br>
+            Made by Deadcode
+        </footer>
+    </div>
+
+    <script>
+    function filterTable() {{
+        const input = document.getElementById("searchInput");
+        const filter = input.value.toLowerCase();
+        const rows = document.querySelectorAll("#portsTable tbody tr");
+
+        rows.forEach(row => {{
+            row.style.display = row.innerText
+                .toLowerCase()
+                .includes(filter) ? "" : "none";
+        }});
+    }}
+
+    function sortTable(column) {{
+        const table = document.getElementById("portsTable");
+        const tbody = table.tBodies[0];
+        const rows = Array.from(tbody.rows);
+
+        const ascending = table.dataset.sortDirection !== "asc";
+
+        rows.sort((a,b) => {{
+            const x = a.cells[column].innerText.trim().toLowerCase();
+            const y = b.cells[column].innerText.trim().toLowerCase();
+
+            const result = x.localeCompare(y, undefined, {{
+                numeric: true
+            }});
+            return ascending ? result : -result;
+        }});
+
+        rows.forEach(row => tbody.appendChild(row));
+        table.dataset.sortDirection = ascending ? "asc" : "desc";
+    }}
+    </script>
+</body>
+</html>
+        """
+
+    
 def write_reports(args, ip: str, state: ScanState, started:datetime, duration: float) -> None:
     summary = {"scanned": state.done, "open": len(state.open), "closed": state.closed, "filtered": state.filtered}
     if args.txt:
@@ -1003,6 +1610,31 @@ def write_reports(args, ip: str, state: ScanState, started:datetime, duration: f
                 f"Failed to export CSV: {error}",
                 file=sys.stderr
             )
+    if args.html:
+        try:
+            report = generate_html_report(
+                args,
+                ip,
+                state,
+                started,
+                duration
+            )
+
+            with open(args.html, "w", encoding="utf-8") as f:
+                f.write(report)
+
+            if not args.quiet:
+                print(
+                    f"{C.GREEN}[*]{C.END} "
+                    f"HTML report saved to {args.html}"
+                )
+        except OSError as error:
+            print(
+                "f{C.RED}[x]{C.END} "
+                f"Failed to export HTML: {error}",
+                file=sys.stderr
+            )
+            
 # #~[Entry Point]~#
 def selected_ports(args, parser) -> list[int]:
     mode = args.mode
