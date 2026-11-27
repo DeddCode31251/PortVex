@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 # #~[Static Data]~#
 SERVICE_MAP = {
@@ -268,7 +268,13 @@ def build_parser () -> argparse.ArgumentParser:
     p.add_argument('--version', action="version", version=f"PortVex {__version__}")
     p.add_argument('--csv', metavar="FILE", help="export scan results as CSV")
     p.add_argument('--scan-type', choices=['tcp','udp','both'], default='tcp', help="Scan type: tcp,udp,both")
-    
+    p.add_argument(
+        "--profile",
+        choices=["fast","slow"],
+        default="slow",
+        help="Scan profile: fast (open ports only) or slow (detailed service detection)"
+    )
+
     return p
 
 class RateLimiter:
@@ -298,6 +304,21 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         await asyncio.wait_for(writer.wait_closed(), 1.0)
     except Exception:
         pass
+
+def apply_scan_profile(args):
+    """Configure Scanner behavior based on the selected profile."""
+
+    if args.profile == "fast":
+        args.timeout = 0.5
+        args.retries = 0
+        args.workers = 500
+        args.no_banner = True
+
+    elif args.profile == "slow":
+        args.timeout = 2.0
+        args.retries = 2
+        args.workers = 100
+        args.no_banner = False
 async def probe_tcp(
     host: str,
     port: int,
@@ -824,7 +845,7 @@ async def run_scan(host: str, ports: list[int], args, state: ScanState) -> None:
         await run_tcp_scan(host, ports, args, state)
 
         # Reset the iterator for UDP
-        state.port_iter = iter(ports)a
+        state.port_iter = iter(ports)
         state.done = 0
 
         await run_udp_scan(host, ports, args, state)
@@ -894,7 +915,7 @@ def render_table(state: ScanState, color: bool = False) -> list[str]:
         info = r.banner
         if r.tls:
             info = f"[{r.tls}] {info}".strip()
-        port_s = f"{str(r.port) + '/tcp':<10}"
+        port_s = f"{str(r.port) + '/' + r.protocol:<10}"
         state_s = f"{r.state: <8}"
         serv_s = f"{r.service:<16}"
         if color: # pad first, colour after, so columns stay aligned
@@ -940,7 +961,7 @@ def write_reports(args, ip: str, state: ScanState, started:datetime, duration: f
             "state",
             "service",
             "banner",
-            "tls"
+            "tls",
             "rtt_ms"
         ]
 
@@ -1007,6 +1028,7 @@ async def amain(args, ports: list[int], state: ScanState) -> str:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    apply_scan_profile(args)
     if args.timeout <=0 or args.workers < 1 or args.retries < 0:
         parser.error("timeout must be > 0, workers >= 1, retries >= 0")
     ports = selected_ports(args, parser)
