@@ -1,183 +1,311 @@
 # PortVex
-A command-line network reconnaissance tool written in Python.
-This project aims to build a lightweight and practical network reconnaissance tool that helps users discover open TCP ports, identify common services, and analyze basic network exposure
 
-PortVex is a student project, its goal is to build a Cybersecurity/Penetration-testing tool
+**A lightweight command-line network reconnaissance tool written in Python.**
 
-Only scan systems you own or have clear permission to test (your own lab, CTF machines, in-scope bug bounty targets).
+PortVex is a network reconnaissance tool designed to discover open TCP ports, identify services, inspect basic network exposure, and generate scan reports.
 
-Current version: **2.2.0**
+This project is developed as a student cybersecurity project, with a focus on building practical penetration-testing and network analysis tools.
 
-# Preview
-<img width="868" height="725" alt="Screenshot From 2026-11-19 22-11-50" src="https://github.com/user-attachments/assets/f10e3de6-401f-4068-8560-4238cb7fac0b" />
+> **Disclaimer:** Only scan systems you own or have explicit permission to test, such as your own lab, CTF machines, or in-scope bug bounty targets.
 
-<img width="761" height="818" alt="Screenshot From 2026-11-16 20-09-29" src="https://github.com/user-attachments/assets/77183088-8899-4c38-883d-f5f29a81ba84" />
+**Current Version:** `2.2.0`
 
-<img width="866" height="805" alt="4" src="https://github.com/user-attachments/assets/06fd6f14-55e9-43f2-bf70-813fec1fe541" />
+---
 
-<img width="933" height="346" alt="1" src="https://github.com/user-attachments/assets/650c9af4-71d6-42e7-a53c-026e162f8e10" />
+## Preview
 
-# Features
-- Three scan modes: one port, the common ports list, or all 65535 ports
-- Port lists and ranges, like `22,80,8000-8100`
-- Asynchronous scanning (asyncio), so hundreds of connections run at the same time
-- Tells apart open, closed and filtered ports
-- Service identification from the real banner, not only from the port number
-- TLS detection, even on non-standard ports, and it shows the TLS version
-- Retries for ports that time out, plus an optional rate limit
-- Open ports are printed live while the scan is still running
-- Quiet mode that prints only `host:port`, useful for piping into other tools
-- Ctrl+C stops the scan but still shows what was found so far
-- Colored output (turns off by itself when piped or when `NO_COLOR` is set)
-- Scan statistics
-- TXT and JSON report export
-- IPv4, IPv6 and hostnames
+<img width="868" height="725" alt="PortVex terminal preview" src="https://github.com/user-attachments/assets/f10e3de6-401f-4068-8560-4238cb7fac0b" />
 
-# Built With
-- Python 3
-- asyncio
-- socket
-- ssl
-- argparse
-- re
-- json
-- dataclasses
+<img width="761" height="818" alt="PortVex scan preview" src="https://github.com/user-attachments/assets/77183088-8899-4c38-883d-f5f29a81ba84" />
 
-# Installation
+<img width="866" height="805" alt="PortVex output preview" src="https://github.com/user-attachments/assets/06fd6f14-55e9-43f2-bf70-813fec1fe541" />
 
-## Option 1: Download the release (no Python needed)
+<img width="933" height="346" alt="PortVex report preview" src="https://github.com/user-attachments/assets/650c9af4-71d6-42e7-a53c-026e162f8e10" />
 
-Every release has a ready-to-run binary made with PyInstaller.
+---
 
-1. Open the [Releases page](https://github.com/DeddCode31251/PortVex/releases)
-2. Pick the version you want (the latest one is at the top)
-3. Scroll down to **Assets** and download the `portvex` file
-4. Open a terminal in the folder where it was saved and make it executable:
+## Features
 
-```
+### Scanning
+
+- Three scan modes: current ports, common ports, and all 65,535 TCP ports.
+- Custom port lists and ranges, such as `22,80,8000-8100`.
+- Asynchronous scanning using Python's `asyncio`.
+- Configurable concurrent connections.
+- Configurable connection timeouts and retries.
+- Optional connection rate limiting.
+- IPv4, IPv6, and hostname support.
+- Live display of discovered open ports.
+- Distinguishes between open, closed, and filtered ports.
+- Handles interrupted scans with `Ctrl+C` while preserving discovered results.
+
+### Service Detection
+
+- Service identification using actual service banners.
+- TLS detection, including on non-standard ports.
+- Displays detected TLS versions.
+- Optional banner grabbing for faster scans.
+
+### Scan Profiles
+
+- Predefined scan profiles for convenient configuration.
+- Profile-based settings for scan parameters such as workers, timeouts, and retries.
+
+### Output and Reporting
+
+- Colored terminal output.
+- Quiet mode for command-line pipelines.
+- Scan statistics and summaries.
+- TXT report export.
+- JSON report export.
+- HTML report export.
+
+---
+
+## Built With
+
+PortVex uses Python's standard library.
+
+| Technology | Purpose |
+|---|---|
+| Python 3 | Main programming language |
+| asyncio | Asynchronous scanning |
+| socket | Network connections |
+| ssl | TLS detection |
+| argparse | Command-line argument parsing |
+| re | Regular expressions |
+| json | JSON report generation |
+| dataclasses | Structured data management |
+
+No third-party packages are required to run PortVex from source.
+
+---
+
+## Installation
+
+### Option 1: Download a Release
+
+PortVex releases include a ready-to-run Linux binary built with PyInstaller.
+
+1. Visit the [PortVex Releases](https://github.com/DeddCode31251/PortVex/releases) page.
+2. Select the version you want.
+3. Find the **Assets** section.
+4. Download the `portvex` binary.
+
+Make it executable:
+
+```bash
 chmod +x portvex
 ```
 
-5. Run it:
+Run it:
 
-```
+```bash
 ./portvex --help
 ```
 
-You can also download it straight from the terminal:
+You can also download the latest release directly:
 
-```
+```bash
 curl -L -o portvex https://github.com/DeddCode31251/PortVex/releases/latest/download/portvex
+
 chmod +x portvex
+
 ./portvex --help
 ```
 
-If you want to run it from anywhere, move it into your PATH:
+To run PortVex from anywhere, move it into your PATH:
 
-```
+```bash
 sudo mv portvex /usr/local/bin/
+```
+
+Example:
+
+```bash
 portvex -i 127.0.0.1 --mode common
 ```
 
-The binary is built for Linux (64-bit). PyInstaller builds only work on the system they were made on, so on Windows or macOS use Option 2 below. If you get a `GLIBC` error on an older distro, use Option 2 as well.
+**Platform compatibility:** The provided binary is built for 64-bit Linux. PyInstaller executables are platform-specific. Windows and macOS users should use Option 2.
 
-## Option 2: Run from source
+If you encounter a GLIBC compatibility error, running from source may be a better option.
 
-You need Python 3.10 or newer.
+### Option 2: Run From Source
 
-Clone the repository
-```
+Requirements:
+
+- Python 3.10 or newer.
+- Git.
+
+Clone the repository:
+
+```bash
 git clone https://github.com/DeddCode31251/PortVex.git
 ```
 
-Navigate into the project directory
-```
+Navigate into the project:
+
+```bash
 cd PortVex
 ```
 
-Run PortVex
-```
+Run PortVex:
+
+```bash
 python3 portvex.py --help
 ```
 
-There are no extra packages to install, it only uses the standard library.
+No additional packages are required.
 
-# Usage
+---
+
+## Usage
 
 General syntax:
-```
+
+```bash
 python3 portvex.py -i <TARGET> [OPTIONS]
 ```
+
 If you downloaded the binary, replace `python3 portvex.py` with `./portvex`.
 
-## Options
+### Command-Line Options
 
-| Option | What it does |
+| Option | Description |
 |---|---|
-| `-i`, `--ip` | Target IPv4, IPv6 or hostname (required) |
-| `-p`, `--port` | Ports to scan: `80`, `22,80,443`, `1-1024`, `22,8000-8100`, or `-` for all |
-| `--mode` | `current` (only the ports from `-p`), `common` or `full` |
-| `-t`, `--timeout` | Connection timeout in seconds (default 1.5) |
-| `-w`, `--workers` | Max connections at the same time (default 500) |
-| `-r`, `--retries` | Retries for ports that time out (default 1) |
-| `--rate` | Max new connections per second, 0 means no limit |
-| `--no-banner` | Skip banner grabbing and service detection, faster |
-| `-q`, `--quiet` | Print only `host:port` for each open port, implies `--no-banner` |
-| `--txt FILE` | Save the report as text |
-| `--json FILE` | Save the report as JSON |
-| `--version` | Show the version |
+| `-i`, `--ip` | Target IPv4, IPv6, or hostname (required) |
+| `-p`, `--port` | Ports to scan: `80`, `22,80,443`, `1-1024`, or `-` for all |
+| `--mode` | Scan mode: `current`, `common`, or `full` |
+| `--profile` | Apply a predefined scan configuration |
+| `-t`, `--timeout` | Connection timeout in seconds |
+| `-w`, `--workers` | Maximum concurrent connections |
+| `-r`, `--retries` | Number of retries for timed-out ports |
+| `--rate` | Maximum new connections per second; `0` means unlimited |
+| `--no-banner` | Skip banner grabbing and service detection |
+| `-q`, `--quiet` | Print only `host:port` for each open port; implies `--no-banner` |
+| `--txt FILE` | Export results as a text report |
+| `--json FILE` | Export results as a JSON report |
+| `--html FILE` | Export results as an HTML report |
+| `--version` | Display the current version |
 
-If you give `-p` without `--mode`, only those ports are scanned. If you give `--mode common` or `--mode full` together with `-p`, the `-p` part is ignored and you get a warning.
+For exact default values and available profiles, use:
+
+```bash
+python3 portvex.py --help
+```
+
+If you specify `-p` without `--mode`, PortVex scans only the selected ports.
+
+If you combine `-p` with `--mode common` or `--mode full`, the custom port selection is ignored and a warning is displayed.
+
+---
 
 ## Examples
 
-1. Scan a specific port
-```
+### 1. Scan a Specific Port
+
+```bash
 python3 portvex.py -i 127.0.0.1 -p 80 --mode current
 ```
-2. Scan a list and a range of ports
-```
+
+### 2. Scan Multiple Ports and Ranges
+
+```bash
 python3 portvex.py -i 127.0.0.1 -p 22,80,443,8000-8100
 ```
-3. Scan common ports
-```
+
+### 3. Scan Common Ports
+
+```bash
 python3 portvex.py -i 127.0.0.1 --mode common
 ```
-4. Scan all TCP ports
-```
+
+### 4. Scan All TCP Ports
+
+```bash
 python3 portvex.py -i 127.0.0.1 --mode full
 ```
-5. Customize timeout and workers
-```
+
+### 5. Customize Timeout and Workers
+
+```bash
 python3 portvex.py -i 127.0.0.1 --mode common -t 2 -w 150
 ```
-6. Go easy on the target (50 new connections per second)
+
+### 6. Apply a Scan Profile
+
+```bash
+python3 portvex.py -i 127.0.0.1 --profile fast
 ```
+
+### 7. Limit Connection Rate
+
+For example, limit new connections to 50 per second:
+
+```bash
 python3 portvex.py -i 127.0.0.1 --mode full --rate 50
 ```
-7. Use PortVex for a fast first pass, then give the open ports to nmap
-```
-ports=$(python3 portvex.py -i 127.0.0.1 --mode full -w 1000 -t 0.5 -q | cut -d: -f2 | paste -sd,)
-nmap -sCV -p$ports 127.0.0.1
-```
-8. Export results
 
-Export as TXT:
+### 8. Skip Banner Grabbing
+
+```bash
+python3 portvex.py -i 127.0.0.1 --mode common --no-banner
 ```
+
+### 9. Quiet Mode
+
+Useful when passing results to other command-line tools:
+
+```bash
+python3 portvex.py -i 127.0.0.1 --mode full -q
+```
+
+### 10. Export a TXT Report
+
+```bash
 python3 portvex.py -i 127.0.0.1 --mode common --txt report.txt
 ```
-Export as JSON:
-```
+
+### 11. Export a JSON Report
+
+```bash
 python3 portvex.py -i 127.0.0.1 --mode common --json report.json
 ```
-Export both formats:
-```
-python3 portvex.py -i 127.0.0.1 --mode common --txt report.txt --json report.json
+
+### 12. Generate an HTML Report
+
+```bash
+python3 portvex.py -i 127.0.0.1 --mode common --html report.html
 ```
 
-## Reading the output
+### 13. Export Multiple Report Formats
 
+```bash
+python3 portvex.py -i 127.0.0.1 --mode common \
+    --txt report.txt \
+    --json report.json \
+    --html report.html
 ```
+
+### 14. Use PortVex With Nmap
+
+PortVex can perform an initial scan, and the discovered open ports can be passed to Nmap for further service and version detection.
+
+```bash
+ports=$(python3 portvex.py -i 127.0.0.1 --mode full -w 1000 -t 0.5 -q | cut -d: -f2 | paste -sd,)
+
+nmap -sCV -p"$ports" 127.0.0.1
+```
+
+Only run this against systems you are authorized to test.
+
+---
+
+## Understanding the Output
+
+Example:
+
+```text
 PORT      STATE   SERVICE         INFO
 2222/tcp  open    ssh             OpenSSH_8.2p1
 6379/tcp  open    redis           -NOAUTH Authentication required.
@@ -186,33 +314,92 @@ PORT      STATE   SERVICE         INFO
 9999/tcp  open    unknown
 ```
 
-Port states:
-- open: the connection worked
-- closed: the host answered and refused the connection
-- filtered: nothing came back, usually a firewall dropping the packets
+### Port States
 
-A service name with a `?` at the end (like `ssh?`) is only a guess based on the port number. Without the `?`, the service answered and PortVex recognised it. When most ports show as filtered, PortVex tells you a firewall is probably in the way.
+| State | Meaning |
+|---|---|
+| `open` | The connection was successfully established. |
+| `closed` | The host responded but refused the connection. |
+| `filtered` | No response was received, often because a firewall dropped the packets. |
 
-Colors in the terminal:
-- red: services that are often attacked or misconfigured (telnet, ftp, smb, rdp, redis, mongodb, docker...)
-- green: open state, and encrypted or standard services like ssh and https
-- yellow: web services
-- magenta: unknown services and TLS versions
-- orange: filtered ports
+### Service Identification
 
-# Build your own binary
+A service name ending with `?`, such as `ssh?`, indicates a guess based on the port number.
 
-If you want to make the single-file version yourself:
+A service name without `?` indicates that PortVex identified the service from its response.
 
-```
+When many ports appear as filtered, a firewall or network filtering may be preventing PortVex from receiving responses.
+
+### Terminal Colors
+
+| Color | Meaning |
+|---|---|
+| Red | Services that may require additional security attention, such as Telnet, FTP, SMB, RDP, Redis, MongoDB, and Docker. |
+| Green | Open ports and services such as SSH and HTTPS. |
+| Yellow | Web services. |
+| Magenta | Unknown services and TLS information. |
+| Orange | Filtered ports. |
+
+Terminal colors are automatically disabled when output is piped or when `NO_COLOR` is set.
+
+---
+
+## Building Your Own Binary
+
+You can build a standalone executable using PyInstaller.
+
+Install PyInstaller:
+
+```bash
 pip install pyinstaller
+```
+
+Build PortVex:
+
+```bash
 pyinstaller --onefile portvex.py
 ```
 
-The finished file ends up in the `dist/` folder. Build it on the same type of system you plan to run it on.
+The executable will be generated inside:
 
-# Author
-Deadcode
+```text
+dist/
+```
 
-# License
-MIT
+Build the executable on the same operating system and architecture you intend to run it on.
+
+---
+
+## Contributing
+
+Contributions are welcome!
+
+If you want to improve PortVex, fix bugs, suggest features, or improve documentation, please read:
+
+[CONTRIBUTING.md](CONTRIBUTING.md)
+
+Before submitting changes, make sure they are tested and follow the project's development guidelines.
+
+---
+
+## Security
+
+If you discover a security vulnerability, please follow the instructions in:
+
+[SECURITY.md](SECURITY.md)
+
+Do not publicly disclose vulnerabilities before they have been responsibly reviewed.
+
+---
+
+## Author
+
+**Deadcode**
+
+---
+
+## License
+
+PortVex is distributed under the MIT License.
+
+See [LICENSE](LICENSE) for details.
