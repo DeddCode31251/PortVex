@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PortVex (Simulation)</title>
+    <link rel="shortcut icon" href="logo.ico" type="image/x-icon">
+    <style>
+        :root {
+            --night: #03071e;
+            --wine: #370617;
+            --maroon: #6A040F;
+            --crimson: #9D0208;
+            --red: #D00000;
+            --vermilion: #DC2F02;
+            --burnt-orange: #E85D04;
+            --tangerine: #F48C06;
+            --amber: #FAA307;
+            --gold: #FFBA08;
+        }
+        * {
+            transition: 0.3s all ease;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--night);
+        }
+
+        .header {
+            color: white;
+            text-align: left;
+            margin-left: 50px;
+            font-size: 6vw;
+            text-shadow: 0 0 2vw var(--wine);
+        }
+
+        .header:hover {
+            color: var(--vermilion);
+        }
+
+        .description {
+            color: #E85D04;
+            width: 80%;
+            margin-left: 50px;
+        }
+
+        .description:hover {
+            text-shadow: 0 0 2vw var(--night);
+        }
+
+        #download {
+            background-color: white;
+            color: black;
+            width: 135px;
+            height: 55px;
+            font-size: 1.8vw;
+            border-radius: 10px;
+        }
+
+        #github {
+            background-color: black;
+            color: white;
+            border: 1px white solid;
+        }
+
+        #download,#github {
+            font-size: 1.8vw;
+            width: 135px;
+            height: 55px;
+            border-radius: 10px;
+            margin: 5px;
+        }
+
+        #download:hover,#github:hover{
+            scale: 1.1;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #container {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: left;
+            margin-left: 50px;
+            margin-top: 10px;
+        }
+
+        .simulator {
+            border: 1px var(--wine) solid;
+            width: 90%;
+            height: 500px;
+            margin: 30px auto;
+        }
+
+        .line {
+            background-color: rgb(71, 70, 70);
+        }
+
+        p {
+            color: grey;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+
+    </style>
+</head>
+<body>
+    <!--Header-->
+    <h1 class="header">Try PortVex without <br> installing it</h1>
+    <p class="description">PortVex is a command-line reconnaissance tool for CTF rooms, bug bounty recon and daily pentest work. It finds open TCP/UDP ports, reads the service banners and tells you what is really running on them.</p>
+
+    <div id="container">
+        <button id="download" onclick="window.location='https://github.com/DeddCode31251/PortVex/releases/tag/v2.2.0'">Download v.2.2.0</button>
+        <button id="github" onclick="window.location='https://github.com/DeddCode31251/PortVex/'">View on Github</button>
+    </div>
+
+    <div class="simulator"></div>
+
+    <hr class="line">
+    <p id="footer"> Only scan systems you own or have written permission to test. Made by Deadcode, MIT License</p>
+
+
+</body>
+</html>
