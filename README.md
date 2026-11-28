@@ -9,7 +9,7 @@ This project is developed as a student cybersecurity project, with a focus on bu
 > **Disclaimer:** Only scan systems you own or have explicit permission to test, such as your own lab, CTF machines, or in-scope bug bounty targets.
 
 **Current Version:** `2.2.0`
-
+**Playable Version:**
 ---
 
 ## Preview
